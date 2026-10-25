@@ -13,6 +13,8 @@ class Settings(BaseSettings):
     db_max_overflow: int = 20
     db_echo: bool = False
     cors_origins: list[str] = ["http://localhost:3000"]
+    # Prefixed to 10-digit local numbers when normalizing phones (91 = India).
+    default_country_code: str = "91"
 
 
 @lru_cache
