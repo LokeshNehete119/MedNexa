@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 from alembic import command
 from alembic.config import Config
+from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
@@ -20,6 +21,8 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from app.config import get_settings
+from app.database import get_db
+from app.main import create_app
 from app.models import Base
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
@@ -60,3 +63,17 @@ async def _clean_tables(engine: AsyncEngine) -> AsyncIterator[None]:
 async def db(session_factory: async_sessionmaker[AsyncSession]) -> AsyncIterator[AsyncSession]:
     async with session_factory() as session:
         yield session
+
+
+@pytest.fixture
+async def client(session_factory: async_sessionmaker[AsyncSession]) -> AsyncIterator[AsyncClient]:
+    """HTTP client against the app, with requests using the test database."""
+    app = create_app()
+
+    async def _test_db() -> AsyncIterator[AsyncSession]:
+        async with session_factory() as session:
+            yield session
+
+    app.dependency_overrides[get_db] = _test_db
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+        yield c
