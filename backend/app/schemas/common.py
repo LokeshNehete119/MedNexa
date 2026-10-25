@@ -19,6 +19,18 @@ class Page(BaseModel, Generic[T]):
     offset: int
 
 
+def reject_explicit_nulls(model: BaseModel, nullable: frozenset[str] = frozenset()) -> None:
+    """For PATCH bodies: an omitted field means "keep", but an explicit null is only
+    allowed for fields whose column is nullable."""
+    bad = sorted(
+        name
+        for name in model.model_fields_set
+        if getattr(model, name) is None and name not in nullable
+    )
+    if bad:
+        raise ValueError(f"{', '.join(bad)} cannot be null")
+
+
 def _valid_timezone(value: str) -> str:
     try:
         ZoneInfo(value)
