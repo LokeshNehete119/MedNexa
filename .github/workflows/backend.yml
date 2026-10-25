@@ -1,14 +1,14 @@
 name: Backend CI
 
+# Runs only when something under backend/ changes. Manual runs stay available
+# from the Actions tab (workflow_dispatch) and never trigger on their own.
 on:
   push:
     paths:
       - "backend/**"
-      - ".github/workflows/backend.yml"
   pull_request:
     paths:
       - "backend/**"
-      - ".github/workflows/backend.yml"
   workflow_dispatch:
 
 # A newer push to the same branch/PR cancels the run in progress.
