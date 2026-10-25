@@ -35,6 +35,22 @@ prefix).
 | Check models and migrations agree | `uv run alembic check` |
 | Reset sample data | `uv run python -m scripts.seed --reset` |
 
+## CI
+
+`.github/workflows/backend.yml` runs on every push and pull request that changes
+`backend/` (and can be started manually from the Actions tab):
+
+- **Lint, format & types:** ruff check, ruff format --check, mypy
+- **Migrations & tests:** against a Postgres 16 service container: `alembic upgrade
+  head`, `alembic check` (models and migrations agree), the seed script, then
+  `pytest --cov` (fails under 80%); the coverage report is uploaded as an artifact
+
+Run the same checks locally before pushing:
+
+```bash
+uv run ruff check . && uv run ruff format --check . && uv run mypy app scripts && uv run pytest --cov
+```
+
 ## Layout
 
 ```
