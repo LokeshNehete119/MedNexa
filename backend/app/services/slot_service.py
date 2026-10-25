@@ -19,6 +19,7 @@ from app.core.timeutils import add_minutes, generate_time_slots, hospital_now
 from app.models import Appointment, AppointmentStatus, Doctor, Hospital, Schedule
 from app.schemas.slot import DoctorSlotOut, SlotOut
 
+# Days searched by find_next_available, counting the start date.
 NEXT_AVAILABLE_HORIZON_DAYS = 14
 
 
@@ -135,8 +136,8 @@ async def find_next_available(
 
     Matches speciality or department, case-insensitively and by substring, since
     callers say things like "heart doctor" -> "cardio". LIKE wildcards are matched
-    literally and a blank speciality returns nothing. Searches up to
-    NEXT_AVAILABLE_HORIZON_DAYS days ahead.
+    literally and a blank speciality returns nothing. Searches
+    NEXT_AVAILABLE_HORIZON_DAYS days, starting from (and including) the start date.
     """
     hospital = await db.get(Hospital, hospital_id)
     if hospital is None:
@@ -146,7 +147,7 @@ async def find_next_available(
         return []
     now = now or hospital_now(hospital.timezone)
     start = max(from_date or now.date(), now.date())
-    end = start + timedelta(days=NEXT_AVAILABLE_HORIZON_DAYS)
+    end = start + timedelta(days=NEXT_AVAILABLE_HORIZON_DAYS - 1)  # inclusive: 14 days
 
     doctors = list(
         await db.scalars(

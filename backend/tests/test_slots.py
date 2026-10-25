@@ -178,3 +178,14 @@ async def test_find_next_available_never_returns_past_dates(db) -> None:
         db, hospital.id, "Cardiology", MONDAY - timedelta(days=7), limit=1, now=now
     )
     assert results[0].date == MONDAY
+
+
+async def test_find_next_available_horizon_is_exactly_14_days(db) -> None:
+    hospital = await make_hospital(db)
+    doctor = await make_doctor(db, hospital, available_days=[1], max_daily_appointments=1)
+    patient = await make_patient(db, hospital)
+    await make_appointment(db, doctor, patient, MONDAY, time(9))  # day 1 full
+    await make_override(db, doctor, MONDAY + timedelta(days=7), is_available=False)  # day 8 off
+
+    # Day 15 (MONDAY + 14) is the first free Monday but lies outside the 14-day window.
+    assert await find_next_available(db, hospital.id, "Cardiology", MONDAY, now=EARLY) == []
