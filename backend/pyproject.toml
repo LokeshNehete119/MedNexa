@@ -54,3 +54,14 @@ asyncio_default_test_loop_scope = "session"
 testpaths = ["tests"]
 addopts = "--strict-markers"
 filterwarnings = ["error::sqlalchemy.exc.SADeprecationWarning"]
+
+[tool.coverage.run]
+source = ["app"]
+# SQLAlchemy's async layer runs ORM code in greenlets; without this, lines
+# executed there are reported as uncovered.
+concurrency = ["greenlet", "thread"]
+
+[tool.coverage.report]
+fail_under = 80
+show_missing = true
+skip_covered = true
