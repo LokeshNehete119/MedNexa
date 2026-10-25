@@ -1,0 +1,128 @@
+"""Service-level tests for the agent lookups and admin helpers not covered elsewhere."""
+
+from datetime import time, timedelta
+
+import pytest
+
+from app.core.exceptions import Conflict, DomainValidationError, NotFound
+from app.models import CallOutcome, CallRole
+from app.schemas.call import CallLogCreate, CallSessionCreate, CallSessionEnd
+from app.schemas.hospital import HospitalInfoCreate
+from app.schemas.patient import PatientCreate
+from app.schemas.schedule import ScheduleOverrideIn
+from app.services import (
+    call_service,
+    contracts,
+    hospital_service,
+    patient_service,
+    schedule_service,
+)
+from tests.factories import make_doctor, make_hospital, next_weekday
+
+MONDAY = next_weekday(1)
+
+
+async def test_hospital_info_ranks_by_keyword_overlap(db) -> None:
+    hospital = await make_hospital(db)
+    for category, question, answer in [
+        ("Parking", "Is there parking?", "Free parking in basement for cars and bikes."),
+        ("Timings", "What are OPD timings?", "OPD runs 9am to 5pm, Monday to Saturday."),
+        ("Pharmacy", "Is the pharmacy open at night?", "The pharmacy is open 24 hours."),
+    ]:
+        await hospital_service.create_info(
+            db, hospital.id, HospitalInfoCreate(category=category, question=question, answer=answer)
+        )
+
+    results = await contracts.get_hospital_info(db, hospital.id, "Where can I park my car?")
+    assert results[0].category == "Parking"
+    assert await contracts.get_hospital_info(db, hospital.id, "helicopter landing") == []
+    assert len(await contracts.get_hospital_info(db, hospital.id, "what is the")) == 3
+
+
+async def test_deactivated_info_is_hidden_from_agent(db) -> None:
+    hospital = await make_hospital(db)
+    info = await hospital_service.create_info(
+        db, hospital.id, HospitalInfoCreate(category="Parking", question="Parking?", answer="Yes")
+    )
+    await hospital_service.deactivate_info(db, info.id)
+    assert await contracts.get_hospital_info(db, hospital.id, "parking") == []
+
+
+async def test_list_doctors_filters_and_hides_inactive(db) -> None:
+    hospital = await make_hospital(db)
+    await make_doctor(db, hospital, name="Dr. Heart")
+    await make_doctor(db, hospital, name="Dr. Skin", speciality="Dermatology", department="Skin")
+    await make_doctor(db, hospital, name="Dr. Gone", is_active=False)
+
+    names = [d.name for d in await contracts.list_doctors(db, hospital.id, speciality="cardio")]
+    assert names == ["Dr. Heart"]
+    assert len(await contracts.list_doctors(db, hospital.id)) == 2
+
+
+async def test_get_doctor_includes_upcoming_overrides(db) -> None:
+    hospital = await make_hospital(db)
+    doctor = await make_doctor(db, hospital)
+    await schedule_service.upsert_override(
+        db, doctor.id, ScheduleOverrideIn(date=MONDAY, is_available=False, override_reason="Leave")
+    )
+    detail = await contracts.get_doctor(db, doctor.id)
+    assert [o.override_reason for o in detail.upcoming_overrides] == ["Leave"]
+
+
+async def test_override_upsert_replaces_and_validates(db) -> None:
+    hospital = await make_hospital(db)
+    doctor = await make_doctor(db, hospital)  # template 09:00-12:00
+    await schedule_service.upsert_override(
+        db, doctor.id, ScheduleOverrideIn(date=MONDAY, is_available=False)
+    )
+    updated = await schedule_service.upsert_override(
+        db, doctor.id, ScheduleOverrideIn(date=MONDAY, start_time=time(10))
+    )
+    assert updated.is_available and updated.start_time == time(10)
+    assert len(await schedule_service.list_overrides(db, doctor.id, None, None)) == 1
+
+    with pytest.raises(DomainValidationError):  # start after template end: no working time
+        await schedule_service.upsert_override(
+            db, doctor.id, ScheduleOverrideIn(date=MONDAY, start_time=time(13))
+        )
+
+    await schedule_service.delete_override(db, doctor.id, MONDAY)
+    with pytest.raises(NotFound):
+        await schedule_service.delete_override(db, doctor.id, MONDAY)
+
+
+async def test_create_patient_rejects_duplicate_identity(db) -> None:
+    hospital = await make_hospital(db)
+    data = PatientCreate(hospital_id=hospital.id, name="Rahul Kumar", phone="9876543210")
+    await patient_service.create_patient(db, data)
+    with pytest.raises(Conflict):
+        await patient_service.create_patient(
+            db, PatientCreate(hospital_id=hospital.id, name="RAHUL kumar", phone="+919876543210")
+        )
+
+
+async def test_call_lifecycle(db) -> None:
+    hospital = await make_hospital(db)
+    session = await call_service.start_call(
+        db, CallSessionCreate(hospital_id=hospital.id, caller_phone="98765 43210")
+    )
+    assert session.caller_phone == "+919876543210"
+
+    for role in (CallRole.ASSISTANT, CallRole.USER, CallRole.TOOL):
+        await call_service.append_log(db, session.id, CallLogCreate(role=role, content="..."))
+    await call_service.end_call(
+        db, session.id, CallSessionEnd(call_outcome=CallOutcome.INFO_PROVIDED, summary="Asked OPD")
+    )
+
+    detail = await call_service.get_call(db, session.id)
+    assert detail.total_turns == 2  # tool entries don't count as turns
+    assert [log.role for log in detail.logs] == [CallRole.ASSISTANT, CallRole.USER, CallRole.TOOL]
+    assert detail.call_end is not None
+    assert detail.call_end - detail.call_start < timedelta(minutes=1)
+
+    with pytest.raises(DomainValidationError):
+        await call_service.append_log(
+            db, session.id, CallLogCreate(role=CallRole.USER, content="x")
+        )
+    with pytest.raises(DomainValidationError):
+        await call_service.end_call(db, session.id, CallSessionEnd(call_outcome=CallOutcome.OTHER))
