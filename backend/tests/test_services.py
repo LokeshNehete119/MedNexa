@@ -191,3 +191,17 @@ async def test_concurrent_logs_and_end_never_leave_logs_on_ended_call(db, sessio
     assert detail.total_turns == len(detail.logs) == len(accepted)
     # Every accepted log committed before the call ended (row lock serialises them).
     assert all(log.timestamp <= detail.call_end for log in detail.logs)
+
+
+async def test_override_upsert_bumps_updated_at(db) -> None:
+    hospital = await make_hospital(db)
+    doctor = await make_doctor(db, hospital)
+    first = await schedule_service.upsert_override(
+        db, doctor.id, ScheduleOverrideIn(date=MONDAY, is_available=False)
+    )
+    created_at, first_updated = first.created_at, first.updated_at
+    second = await schedule_service.upsert_override(
+        db, doctor.id, ScheduleOverrideIn(date=MONDAY, start_time=time(10))
+    )
+    assert second.created_at == created_at
+    assert second.updated_at > first_updated
