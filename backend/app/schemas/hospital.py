@@ -3,7 +3,7 @@ from datetime import datetime, time
 
 from pydantic import BaseModel, EmailStr, Field, model_validator
 
-from app.schemas.common import ORMModel, TimeZoneName
+from app.schemas.common import ORMModel, TimeZoneName, reject_explicit_nulls
 
 
 class HospitalCreate(BaseModel):
@@ -36,6 +36,11 @@ class HospitalUpdate(BaseModel):
     general_instructions: str | None = None
     is_active: bool | None = None
 
+    @model_validator(mode="after")
+    def _no_nulls(self) -> "HospitalUpdate":
+        reject_explicit_nulls(self, nullable=frozenset({"email", "general_instructions"}))
+        return self
+
 
 class HospitalOut(ORMModel):
     id: uuid.UUID
@@ -64,6 +69,11 @@ class HospitalInfoUpdate(BaseModel):
     question: str | None = Field(default=None, min_length=1)
     answer: str | None = Field(default=None, min_length=1)
     is_active: bool | None = None
+
+    @model_validator(mode="after")
+    def _no_nulls(self) -> "HospitalInfoUpdate":
+        reject_explicit_nulls(self)
+        return self
 
 
 class HospitalInfoOut(ORMModel):

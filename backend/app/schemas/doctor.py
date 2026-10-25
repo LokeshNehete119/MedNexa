@@ -3,7 +3,7 @@ from datetime import datetime, time
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from app.schemas.common import ORMModel
+from app.schemas.common import ORMModel, reject_explicit_nulls
 from app.schemas.schedule import ScheduleOverrideOut
 
 
@@ -52,6 +52,11 @@ class DoctorUpdate(BaseModel):
     @classmethod
     def _days(cls, days: list[int] | None) -> list[int] | None:
         return None if days is None else _clean_days(days)
+
+    @model_validator(mode="after")
+    def _no_nulls(self) -> "DoctorUpdate":
+        reject_explicit_nulls(self, nullable=frozenset({"qualification", "bio"}))
+        return self
 
 
 class DoctorOut(ORMModel):
