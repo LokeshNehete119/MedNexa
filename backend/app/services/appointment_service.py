@@ -34,6 +34,7 @@ from app.core.normalize import normalize_phone
 from app.core.timeutils import hospital_now
 from app.models import Appointment, AppointmentStatus, BookingSource, Doctor, Hospital, Patient
 from app.schemas.appointment import AppointmentOut, BookingConfirmation, BookingRequest
+from app.services.common import paginate
 from app.services.patient_service import find_patient, upsert_patient
 from app.services.slot_service import DayPlan, is_bookable_doctor, load_day_plan
 
@@ -354,3 +355,54 @@ async def get_patient_appointments(
             now = hospital_now(tz or "Asia/Kolkata")
         query = query.where(Appointment.appointment_date >= now.date())
     return [AppointmentOut.from_model(a) for a in await db.scalars(query)]
+
+
+# --- staff / dashboard --------------------------------------------------------------
+
+
+async def get_appointment(db: AsyncSession, appointment_id: uuid.UUID) -> AppointmentOut:
+    appt = await db.scalar(
+        select(Appointment)
+        .where(Appointment.id == appointment_id)
+        .options(selectinload(Appointment.patient), selectinload(Appointment.doctor))
+    )
+    if appt is None:
+        raise NotFound("Appointment not found")
+    return AppointmentOut.from_model(appt)
+
+
+async def list_appointments(
+    db: AsyncSession,
+    *,
+    hospital_id: uuid.UUID | None = None,
+    doctor_id: uuid.UUID | None = None,
+    patient_id: uuid.UUID | None = None,
+    on: date | None = None,
+    date_from: date | None = None,
+    date_to: date | None = None,
+    status: AppointmentStatus | None = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> tuple[list[AppointmentOut], int]:
+    stmt = select(Appointment).options(
+        selectinload(Appointment.patient), selectinload(Appointment.doctor)
+    )
+    if hospital_id:
+        stmt = stmt.where(Appointment.hospital_id == hospital_id)
+    if doctor_id:
+        stmt = stmt.where(Appointment.doctor_id == doctor_id)
+    if patient_id:
+        stmt = stmt.where(Appointment.patient_id == patient_id)
+    if on:
+        stmt = stmt.where(Appointment.appointment_date == on)
+    if date_from:
+        stmt = stmt.where(Appointment.appointment_date >= date_from)
+    if date_to:
+        stmt = stmt.where(Appointment.appointment_date <= date_to)
+    if status:
+        stmt = stmt.where(Appointment.status == status)
+    stmt = stmt.order_by(
+        Appointment.appointment_date, Appointment.appointment_time, Appointment.token_number
+    )
+    appts, total = await paginate(db, stmt, limit, offset)
+    return [AppointmentOut.from_model(a) for a in appts], total
