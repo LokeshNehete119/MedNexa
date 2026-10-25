@@ -1,0 +1,104 @@
+name: Backend CI
+
+# Runs only when something under backend/ changes. Manual runs stay available
+# from the Actions tab (workflow_dispatch) and never trigger on their own.
+on:
+  push:
+    paths:
+      - "backend/**"
+  pull_request:
+    paths:
+      - "backend/**"
+  workflow_dispatch:
+
+# A newer push to the same branch/PR cancels the run in progress.
+concurrency:
+  group: backend-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: backend
+
+jobs:
+  quality:
+    name: Lint, format & types
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+
+      - name: Install dependencies
+        run: uv sync --locked
+
+      - name: Ruff lint
+        run: uv run ruff check --output-format=github .
+
+      - name: Ruff format
+        run: uv run ruff format --check .
+
+      - name: Mypy
+        run: uv run mypy app scripts
+
+  test:
+    name: Migrations & tests (Postgres 16)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: mednexa
+          POSTGRES_USER: mednexa
+          POSTGRES_PASSWORD: mednexa
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U mednexa -d mednexa"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 15
+    env:
+      MEDNEXA_DATABASE_URL: postgresql+asyncpg://mednexa:mednexa@localhost:5432/mednexa
+      MEDNEXA_TEST_DATABASE_URL: postgresql+asyncpg://mednexa:mednexa@localhost:5432/mednexa_test
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+
+      - name: Install dependencies
+        run: uv sync --locked
+
+      - name: Create test database
+        run: PGPASSWORD=mednexa psql -h localhost -U mednexa -d mednexa -c "CREATE DATABASE mednexa_test"
+
+      - name: Apply migrations
+        run: uv run alembic upgrade head
+
+      - name: Check models and migrations agree
+        run: uv run alembic check
+
+      - name: Seed sample data
+        run: uv run python -m scripts.seed
+
+      - name: Run tests with coverage
+        run: uv run pytest --cov --cov-report=term --cov-report=xml
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-coverage
+          path: backend/coverage.xml
+          if-no-files-found: ignore
