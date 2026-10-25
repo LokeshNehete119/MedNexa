@@ -292,3 +292,24 @@ async def test_get_patient_appointments_upcoming_only(db, doctor) -> None:
         db, hid, PHONE, "Rahul Kumar", upcoming_only=False, now=after
     )
     assert len(history) == 1
+
+
+async def test_upcoming_appointments_exclude_cancelled_rescheduled_and_past(db, doctor) -> None:
+    cancelled = await book_appointment(db, booking(doctor.id, time(9)), now=NOW)
+    await cancel_appointment(db, cancelled.appointment_id, PHONE, now=NOW)
+    moved = await book_appointment(db, booking(doctor.id, time(9, 30)), now=NOW)
+    await reschedule_appointment(db, moved.appointment_id, PHONE, MONDAY, time(11), now=NOW)
+    await book_appointment(db, booking(doctor.id, time(10)), now=NOW)
+
+    during_monday = datetime.combine(MONDAY, time(10, 15), IST)  # 10:00 has passed, 11:00 hasn't
+    upcoming = await get_patient_appointments(
+        db, doctor.hospital_id, PHONE, "Rahul Kumar", now=during_monday
+    )
+    assert [(a.appointment_time, a.status) for a in upcoming] == [
+        (time(11), AppointmentStatus.BOOKED)
+    ]
+
+    history = await get_patient_appointments(
+        db, doctor.hospital_id, PHONE, "Rahul Kumar", upcoming_only=False, now=during_monday
+    )
+    assert len(history) == 4

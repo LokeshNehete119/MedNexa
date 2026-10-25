@@ -13,7 +13,7 @@ the `*_by_staff` variants are for the admin dashboard.
 import uuid
 from datetime import UTC, date, datetime, time
 
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -333,6 +333,10 @@ async def get_patient_appointments(
 ) -> list[AppointmentOut]:
     """Appointments of the patient identified by phone + name (the caller check).
 
+    upcoming_only=True returns only BOOKED appointments that haven't started yet
+    (hospital-local time), i.e. the ones a caller can still cancel or move.
+    upcoming_only=False returns the full history in every status.
+
     Returns an empty list when no patient matches, so callers can't probe
     which phone/name pairs exist.
     """
@@ -353,7 +357,17 @@ async def get_patient_appointments(
         if now is None:
             tz = await db.scalar(select(Hospital.timezone).where(Hospital.id == hospital_id))
             now = hospital_now(tz or "Asia/Kolkata")
-        query = query.where(Appointment.appointment_date >= now.date())
+        today = now.date()
+        query = query.where(
+            Appointment.status == AppointmentStatus.BOOKED,
+            or_(
+                Appointment.appointment_date > today,
+                and_(
+                    Appointment.appointment_date == today,
+                    Appointment.appointment_time > now.time(),
+                ),
+            ),
+        )
     return [AppointmentOut.from_model(a) for a in await db.scalars(query)]
 
 
