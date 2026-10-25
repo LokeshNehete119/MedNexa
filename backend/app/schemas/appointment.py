@@ -5,7 +5,6 @@ from pydantic import BaseModel, Field
 
 from app.models import Appointment
 from app.models.enums import AppointmentStatus, BookingSource
-from app.schemas.common import Phone
 from app.schemas.patient import PatientIn
 
 
@@ -20,10 +19,6 @@ class BookingRequest(BaseModel):
 
 class CancelRequest(BaseModel):
     reason: str | None = Field(default=None, max_length=500)
-
-
-class CallerCancelRequest(CancelRequest):
-    caller_phone: Phone
 
 
 class RescheduleRequest(BaseModel):
