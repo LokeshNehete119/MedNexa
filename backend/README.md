@@ -37,8 +37,9 @@ prefix).
 
 ## CI
 
-`.github/workflows/backend.yml` runs on every push and pull request that changes
-`backend/` (and can be started manually from the Actions tab):
+`.github/workflows/backend.yml` runs only on pushes and pull requests that change
+files under `backend/`; changes elsewhere in the repo don't trigger it. It can
+also be started manually from the Actions tab:
 
 - **Lint, format & types:** ruff check, ruff format --check, mypy
 - **Migrations & tests:** against a Postgres 16 service container: `alembic upgrade
