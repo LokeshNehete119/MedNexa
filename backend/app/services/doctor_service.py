@@ -1,7 +1,7 @@
 import uuid
 from datetime import timedelta
 
-from sqlalchemy import select
+from sqlalchemy import Select, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import DomainValidationError
@@ -25,6 +25,26 @@ async def create_doctor(db: AsyncSession, data: DoctorCreate) -> Doctor:
     return doctor
 
 
+def _doctor_query(
+    hospital_id: uuid.UUID | None,
+    speciality: str | None,
+    department: str | None,
+    include_inactive: bool,
+) -> Select[Doctor]:
+    """Speciality/department match case-insensitively by substring; LIKE wildcards
+    in the input are matched literally and blank filters are ignored."""
+    stmt = select(Doctor)
+    if hospital_id:
+        stmt = stmt.where(Doctor.hospital_id == hospital_id)
+    if speciality and speciality.strip():
+        stmt = stmt.where(Doctor.speciality.icontains(speciality.strip(), autoescape=True))
+    if department and department.strip():
+        stmt = stmt.where(Doctor.department.icontains(department.strip(), autoescape=True))
+    if not include_inactive:
+        stmt = stmt.where(Doctor.is_active)
+    return stmt.order_by(Doctor.name)
+
+
 async def search_doctors(
     db: AsyncSession,
     hospital_id: uuid.UUID | None = None,
@@ -35,17 +55,9 @@ async def search_doctors(
     limit: int = 50,
     offset: int = 0,
 ) -> tuple[list[Doctor], int]:
-    """Dashboard listing. Speciality/department match case-insensitively by substring."""
-    stmt = select(Doctor)
-    if hospital_id:
-        stmt = stmt.where(Doctor.hospital_id == hospital_id)
-    if speciality:
-        stmt = stmt.where(Doctor.speciality.ilike(f"%{speciality.strip()}%"))
-    if department:
-        stmt = stmt.where(Doctor.department.ilike(f"%{department.strip()}%"))
-    if not include_inactive:
-        stmt = stmt.where(Doctor.is_active)
-    return await paginate(db, stmt.order_by(Doctor.name), limit, offset)
+    """Dashboard listing (paged)."""
+    stmt = _doctor_query(hospital_id, speciality, department, include_inactive)
+    return await paginate(db, stmt, limit, offset)
 
 
 async def list_doctors(
@@ -54,9 +66,9 @@ async def list_doctors(
     speciality: str | None = None,
     department: str | None = None,
 ) -> list[DoctorOut]:
-    """Agent lookup: active doctors of a hospital, optionally filtered."""
-    doctors, _ = await search_doctors(db, hospital_id, speciality, department, limit=200)
-    return [DoctorOut.model_validate(d) for d in doctors]
+    """Agent lookup: all active doctors of a hospital, optionally filtered."""
+    stmt = _doctor_query(hospital_id, speciality, department, include_inactive=False)
+    return [DoctorOut.model_validate(d) for d in await db.scalars(stmt)]
 
 
 async def get_doctor(db: AsyncSession, doctor_id: uuid.UUID) -> DoctorDetailOut:

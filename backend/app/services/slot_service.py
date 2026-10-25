@@ -134,26 +134,30 @@ async def find_next_available(
     """Earliest free slots across all active doctors matching `speciality`.
 
     Matches speciality or department, case-insensitively and by substring, since
-    callers say things like "heart doctor" -> "cardio". Searches up to
+    callers say things like "heart doctor" -> "cardio". LIKE wildcards are matched
+    literally and a blank speciality returns nothing. Searches up to
     NEXT_AVAILABLE_HORIZON_DAYS days ahead.
     """
     hospital = await db.get(Hospital, hospital_id)
     if hospital is None:
         raise NotFound("Hospital not found")
-    if not hospital.is_active or limit <= 0:
+    speciality = speciality.strip()
+    if not hospital.is_active or limit <= 0 or not speciality:
         return []
     now = now or hospital_now(hospital.timezone)
     start = max(from_date or now.date(), now.date())
     end = start + timedelta(days=NEXT_AVAILABLE_HORIZON_DAYS)
 
-    pattern = f"%{speciality.strip()}%"
     doctors = list(
         await db.scalars(
             select(Doctor)
             .where(
                 Doctor.hospital_id == hospital_id,
                 Doctor.is_active,
-                or_(Doctor.speciality.ilike(pattern), Doctor.department.ilike(pattern)),
+                or_(
+                    Doctor.speciality.icontains(speciality, autoescape=True),
+                    Doctor.department.icontains(speciality, autoescape=True),
+                ),
             )
             .order_by(Doctor.name)
         )

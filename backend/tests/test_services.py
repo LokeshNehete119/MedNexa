@@ -5,7 +5,7 @@ from datetime import time, timedelta
 import pytest
 
 from app.core.exceptions import Conflict, DomainValidationError, NotFound
-from app.models import CallOutcome, CallRole
+from app.models import CallOutcome, CallRole, Doctor
 from app.schemas.call import CallLogCreate, CallSessionCreate, CallSessionEnd
 from app.schemas.hospital import HospitalInfoCreate
 from app.schemas.patient import PatientCreate
@@ -126,3 +126,35 @@ async def test_call_lifecycle(db) -> None:
         )
     with pytest.raises(DomainValidationError):
         await call_service.end_call(db, session.id, CallSessionEnd(call_outcome=CallOutcome.OTHER))
+
+
+async def test_doctor_search_treats_wildcards_literally(db) -> None:
+    hospital = await make_hospital(db)
+    await make_doctor(db, hospital, name="Dr. Heart")
+    await make_doctor(db, hospital, name="Dr. Skin", speciality="Dermatology", department="Skin")
+
+    for pattern in ("%", "_", "Cardi_logy"):
+        assert await contracts.list_doctors(db, hospital.id, speciality=pattern) == []
+    # A blank filter means "no filter" when listing.
+    assert len(await contracts.list_doctors(db, hospital.id, speciality="   ")) == 2
+
+
+async def test_next_available_rejects_blank_and_wildcard_speciality(db) -> None:
+    hospital = await make_hospital(db)
+    await make_doctor(db, hospital)
+    for speciality in ("   ", "%", "_"):
+        assert await contracts.find_next_available(db, hospital.id, speciality) == []
+
+
+async def test_list_doctors_is_not_capped(db) -> None:
+    hospital = await make_hospital(db)
+    db.add_all(
+        Doctor(
+            hospital_id=hospital.id, name=f"Dr. {i:03d}", speciality="General", department="OPD",
+            max_daily_appointments=10, slot_duration_minutes=15, available_days=[1],
+            slot_start_time=time(9), slot_end_time=time(10),
+        )
+        for i in range(205)
+    )  # fmt: skip
+    await db.commit()
+    assert len(await contracts.list_doctors(db, hospital.id)) == 205
