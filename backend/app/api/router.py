@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends
 
 from app.api.deps import require_staff
-from app.api.v1 import appointments, doctors, health, hospitals, patients, slots
+from app.api.v1 import appointments, calls, doctors, health, hospitals, patients, slots
 
 api_router = APIRouter(prefix="/api/v1")
 api_router.include_router(health.router)
@@ -14,5 +14,6 @@ protected.include_router(doctors.router)
 protected.include_router(slots.router)
 protected.include_router(patients.router)
 protected.include_router(appointments.router)
+protected.include_router(calls.router)
 
 api_router.include_router(protected)
