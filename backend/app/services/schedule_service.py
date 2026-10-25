@@ -1,7 +1,7 @@
 import uuid
 from datetime import date
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -44,6 +44,8 @@ async def upsert_override(
             "start_time": values.excluded.start_time,
             "end_time": values.excluded.end_time,
             "override_reason": values.excluded.override_reason,
+            # ORM onupdate doesn't fire for a Core upsert, so set it explicitly.
+            "updated_at": func.now(),
         },
     ).returning(Schedule)
     override: Schedule = (
