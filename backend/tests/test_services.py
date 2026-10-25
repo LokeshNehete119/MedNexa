@@ -1,5 +1,6 @@
 """Service-level tests for the agent lookups and admin helpers not covered elsewhere."""
 
+import asyncio
 from datetime import time, timedelta
 
 import pytest
@@ -120,12 +121,11 @@ async def test_call_lifecycle(db) -> None:
     assert detail.call_end is not None
     assert detail.call_end - detail.call_start < timedelta(minutes=1)
 
+    call_id = session.id  # a rejected write rolls back and expires loaded objects
     with pytest.raises(DomainValidationError):
-        await call_service.append_log(
-            db, session.id, CallLogCreate(role=CallRole.USER, content="x")
-        )
+        await call_service.append_log(db, call_id, CallLogCreate(role=CallRole.USER, content="x"))
     with pytest.raises(DomainValidationError):
-        await call_service.end_call(db, session.id, CallSessionEnd(call_outcome=CallOutcome.OTHER))
+        await call_service.end_call(db, call_id, CallSessionEnd(call_outcome=CallOutcome.OTHER))
 
 
 async def test_doctor_search_treats_wildcards_literally(db) -> None:
@@ -158,3 +158,36 @@ async def test_list_doctors_is_not_capped(db) -> None:
     )  # fmt: skip
     await db.commit()
     assert len(await contracts.list_doctors(db, hospital.id)) == 205
+
+
+async def test_concurrent_logs_and_end_never_leave_logs_on_ended_call(db, session_factory) -> None:
+    hospital = await make_hospital(db)
+    call = await call_service.start_call(
+        db, CallSessionCreate(hospital_id=hospital.id, caller_phone="9876543210")
+    )
+
+    async def append(i: int):
+        async with session_factory() as s:
+            try:
+                return await call_service.append_log(
+                    s, call.id, CallLogCreate(role=CallRole.USER, content=str(i))
+                )
+            except DomainValidationError as exc:
+                return exc
+
+    async def end():
+        async with session_factory() as s:
+            return await call_service.end_call(
+                s, call.id, CallSessionEnd(call_outcome=CallOutcome.OTHER)
+            )
+
+    results = await asyncio.gather(
+        *(append(i) for i in range(10)), end(), *(append(i) for i in range(10, 20))
+    )
+    accepted = [r for r in results[:10] + results[11:] if not isinstance(r, Exception)]
+
+    async with session_factory() as fresh:
+        detail = await call_service.get_call(fresh, call.id)
+    assert detail.total_turns == len(detail.logs) == len(accepted)
+    # Every accepted log committed before the call ended (row lock serialises them).
+    assert all(log.timestamp <= detail.call_end for log in detail.logs)

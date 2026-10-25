@@ -3,7 +3,7 @@
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import select, update
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import DomainValidationError, NotFound
@@ -23,8 +23,12 @@ from app.services.hospital_service import get_hospital
 _CONVERSATION_ROLES = {CallRole.USER, CallRole.ASSISTANT}
 
 
-async def _get_session(db: AsyncSession, session_id: uuid.UUID) -> CallSession:
-    session = await db.get(CallSession, session_id)
+async def _get_session(
+    db: AsyncSession, session_id: uuid.UUID, *, lock: bool = False
+) -> CallSession:
+    """With lock=True the row is locked (FOR UPDATE) until commit, so appending a
+    log and ending the call can't interleave and leave logs on an ended call."""
+    session = await db.get(CallSession, session_id, with_for_update=lock, populate_existing=lock)
     if session is None:
         raise NotFound("Call session not found")
     return session
@@ -40,33 +44,37 @@ async def start_call(db: AsyncSession, data: CallSessionCreate) -> CallSession:
 
 
 async def append_log(db: AsyncSession, session_id: uuid.UUID, data: CallLogCreate) -> CallLog:
-    session = await _get_session(db, session_id)
-    if session.call_end is not None:
-        raise DomainValidationError("Call has already ended")
-    log = CallLog(session_id=session_id, **data.model_dump())
-    db.add(log)
-    if data.role in _CONVERSATION_ROLES:
-        await db.execute(
-            update(CallSession)
-            .where(CallSession.id == session_id)
-            .values(total_turns=CallSession.total_turns + 1)
-        )
-    await db.commit()
+    try:
+        session = await _get_session(db, session_id, lock=True)
+        if session.call_end is not None:
+            raise DomainValidationError("Call has already ended")
+        log = CallLog(session_id=session_id, **data.model_dump())
+        db.add(log)
+        if data.role in _CONVERSATION_ROLES:
+            session.total_turns += 1
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        raise
     await db.refresh(log)
     return log
 
 
 async def end_call(db: AsyncSession, session_id: uuid.UUID, data: CallSessionEnd) -> CallSession:
-    session = await _get_session(db, session_id)
-    if session.call_end is not None:
-        raise DomainValidationError("Call has already ended")
-    session.call_end = datetime.now(UTC)
-    session.call_outcome = data.call_outcome
-    session.summary = data.summary
-    session.escalated_to_human = data.escalated_to_human
-    if data.language_detected:
-        session.language_detected = data.language_detected
-    await db.commit()
+    try:
+        session = await _get_session(db, session_id, lock=True)
+        if session.call_end is not None:
+            raise DomainValidationError("Call has already ended")
+        session.call_end = datetime.now(UTC)
+        session.call_outcome = data.call_outcome
+        session.summary = data.summary
+        session.escalated_to_human = data.escalated_to_human
+        if data.language_detected:
+            session.language_detected = data.language_detected
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        raise
     await db.refresh(session)
     return session
 
