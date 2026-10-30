@@ -39,7 +39,8 @@ COPY --from=builder /app/package.json ./package.json
 USER nextjs
 
 # Runtime configuration (nothing is baked into the image): BACKEND_URL (where this
-# server reaches the API, e.g. http://api:8000) and optionally AUTH_COOKIE_SECURE.
+# server reaches the API, e.g. http://api:8000), optionally TELEPHONY_URL (for the phone
+# line status) and AUTH_COOKIE_SECURE.
 # Sign-in is checked by the backend. See .env.example.
 EXPOSE 3000
 

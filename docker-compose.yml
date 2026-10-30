@@ -113,6 +113,8 @@ services:
     environment:
       # How the dashboard server reaches the API. Browsers only talk to the dashboard.
       BACKEND_URL: http://api:8000
+      # Only used to show whether the phone line is answering.
+      TELEPHONY_URL: http://telephony:8001
       # Cookies are Secure by default. Plain-HTTP access from other machines needs "false"
       # (HTTPS is strongly preferred); http://localhost works either way.
       AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-true}
