@@ -80,7 +80,7 @@
   --status-cancelled: #b42318;
   --status-moved: #9a6700;
   --status-done: #5f6a65;
-  --chart-1: #1e6b5c;
+  --chart-1: #0a8a6c; /* the brand green, saturated enough for chart marks */
   --chart-2: #6ba596;
   --chart-3: #9a6700;
   --chart-4: #b42318;
@@ -119,7 +119,7 @@
   --status-cancelled: #f07a6e;
   --status-moved: #d9a441;
   --status-done: #98a39e;
-  --chart-1: #5fb39f;
+  --chart-1: #1fa07f;
   --chart-2: #3d7d6e;
   --chart-3: #d9a441;
   --chart-4: #f07a6e;
