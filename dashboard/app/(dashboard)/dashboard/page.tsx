@@ -76,6 +76,7 @@ export default function TodayPage() {
 
   const [days, setDays] = React.useState<DoctorDay[]>([]);
   const [appointments, setAppointments] = React.useState<AppointmentOut[]>([]);
+  const [doctorCount, setDoctorCount] = React.useState(0);
   const [loading, setLoading] = React.useState(true);
   const [bookingOpen, setBookingOpen] = React.useState(false);
 
@@ -106,6 +107,7 @@ export default function TodayPage() {
         })
       );
       setAppointments(appts.items);
+      setDoctorCount(doctors.total);
       // Doctors on duty, plus anyone off duty who still has patients booked that day.
       setDays(perDoctor.filter((d) => d.onDuty || d.queue.length > 0));
     } catch (err) {
@@ -195,13 +197,27 @@ export default function TodayPage() {
         </div>
       ) : days.length === 0 ? (
         <div className="rounded-lg border border-border bg-card px-6 py-10">
-          <h2 className="text-sm font-semibold">No doctors are seeing patients on {formatDate(date)}</h2>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Doctors&apos; working days are set on their schedule page.
-          </p>
-          <Link href="/doctors" className={cn(buttonVariants({ variant: "outline", size: "sm" }), "mt-4")}>
-            Go to doctors
-          </Link>
+          {doctorCount === 0 ? (
+            <>
+              <h2 className="text-sm font-semibold">Add your doctors</h2>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Patients can book, at the desk or by phone, once doctors and their hours are added.
+              </p>
+              <Link href="/doctors" className={cn(buttonVariants({ size: "sm" }), "mt-4")}>
+                Add doctors
+              </Link>
+            </>
+          ) : (
+            <>
+              <h2 className="text-sm font-semibold">No doctors are seeing patients on {formatDate(date)}</h2>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Doctors&apos; working days and leave are set on their schedule page.
+              </p>
+              <Link href="/doctors" className={cn(buttonVariants({ variant: "outline", size: "sm" }), "mt-4")}>
+                Go to doctors
+              </Link>
+            </>
+          )}
         </div>
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
