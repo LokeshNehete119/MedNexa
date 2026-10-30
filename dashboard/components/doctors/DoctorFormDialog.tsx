@@ -200,16 +200,11 @@ export function DoctorFormDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <div className="flex items-center gap-2 text-blue-600 dark:text-blue-400">
-            <Stethoscope className="w-5 h-5" />
-            <DialogTitle className="text-lg font-bold">
-              {isEditing ? `Edit ${doctor?.name}` : "Add New Doctor"}
-            </DialogTitle>
-          </div>
-          <DialogDescription className="text-xs text-muted-foreground">
+          <DialogTitle>{isEditing ? `Edit ${doctor?.name}` : "Add doctor"}</DialogTitle>
+          <DialogDescription>
             {isEditing
-              ? "Update medical credentials, schedule capacity, and shift availability."
-              : "Register a new practitioner to the hospital roster for AI voice receptionist bookings."}
+              ? "Changes apply to new bookings, including those made by phone."
+              : "Patients can book this doctor, at the desk or by phone, once they're saved."}
           </DialogDescription>
         </DialogHeader>
 
@@ -290,10 +285,10 @@ export function DoctorFormDialog({
           <div className="space-y-2 pt-1 border-t border-border">
             <div className="flex items-center justify-between">
               <Label className="text-xs font-semibold flex items-center gap-1.5">
-                <Calendar className="w-3.5 h-3.5 text-blue-500" />
+                <Calendar className="w-3.5 h-3.5 text-muted-foreground" />
                 <span>Working Days Template *</span>
               </Label>
-              <div className="flex items-center gap-2 text-[11px] text-blue-600 dark:text-blue-400">
+              <div className="flex items-center gap-2 text-[12px] text-muted-foreground">
                 <button
                   type="button"
                   onClick={selectAllWeekdays}
@@ -322,7 +317,7 @@ export function DoctorFormDialog({
                     onClick={() => toggleDay(w.day)}
                     className={`py-2 px-1 rounded-lg text-xs font-semibold transition-all flex flex-col items-center justify-center gap-0.5 cursor-pointer border ${
                       isSelected
-                        ? "bg-blue-600 text-white border-blue-600 shadow-xs"
+                        ? "bg-primary text-primary-foreground border-primary"
                         : "bg-background text-muted-foreground border-border hover:bg-muted"
                     }`}
                   >
@@ -436,7 +431,7 @@ export function DoctorFormDialog({
             <Button
               type="submit"
               disabled={isSubmitting}
-              className="text-xs h-9 bg-blue-600 hover:bg-blue-700 text-white font-medium cursor-pointer"
+              className="h-9"
             >
               {isSubmitting
                 ? "Saving..."
