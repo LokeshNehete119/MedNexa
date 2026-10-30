@@ -72,7 +72,7 @@ export default function AppointmentDetailPage() {
       />
 
       <div className="grid gap-4 lg:grid-cols-[12rem_1fr]">
-        <div className="rounded-lg border border-border bg-card px-4 py-5">
+        <div className="self-start rounded-lg border border-border bg-card px-4 py-5">
           <p className="text-[13px] text-muted-foreground">Token</p>
           <p className="tabular text-6xl leading-none font-semibold tracking-tight">{a.token_number}</p>
           <div className="mt-4">

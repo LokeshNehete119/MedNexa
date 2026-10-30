@@ -16,7 +16,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { createDoctor, updateDoctor, type DoctorCreate, type DoctorOut, type DoctorUpdate } from "@/lib/api";
 import { useHospital } from "@/contexts/HospitalContext";
 import { toast } from "sonner";
-import { Stethoscope, Clock, Calendar, Check, AlertCircle } from "lucide-react";
+import { Clock, Calendar, Check, AlertCircle } from "lucide-react";
 
 interface DoctorFormDialogProps {
   open: boolean;
