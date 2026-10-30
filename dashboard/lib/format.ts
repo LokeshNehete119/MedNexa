@@ -48,3 +48,12 @@ export function initials(name: string): string {
     .map((part) => part[0]?.toUpperCase())
     .join("");
 }
+
+const GENDER: Record<string, string> = { MALE: "Male", FEMALE: "Female", OTHER: "Other" };
+
+/** "34 yrs, Female" (whatever is known) */
+export function describePatient(p: { age: number | null; gender: string | null }): string {
+  return [p.age !== null ? `${p.age} yrs` : null, p.gender ? GENDER[p.gender] : null].filter(Boolean).join(", ");
+}
+
+export const LANGUAGES: Record<string, string> = { en: "English", hi: "Hindi" };

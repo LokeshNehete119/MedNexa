@@ -23,30 +23,20 @@ import {
   type SlotOut,
   type BookingConfirmation,
   type Gender,
+  type PatientOut,
 } from "@/lib/api";
 import { toast } from "sonner";
 import { useHospital } from "@/contexts/HospitalContext";
 import { todayIn } from "@/lib/dates";
-import {
-  Calendar,
-  Clock,
-  User,
-  Phone,
-  CheckCircle2,
-  Stethoscope,
-  ChevronRight,
-  ChevronLeft,
-  Loader2,
-  AlertCircle,
-  FileText,
-  Hash,
-} from "lucide-react";
+import { Calendar, Clock, User, Phone, CheckCircle2, Stethoscope, ChevronRight, ChevronLeft, Loader2, AlertCircle, FileText } from "lucide-react";
 
 interface BookAppointmentDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   defaultDate?: string;
   defaultDoctorId?: string;
+  /** Pre-fills step 2 when booking for a patient who is already registered. */
+  defaultPatient?: Pick<PatientOut, "name" | "phone" | "age" | "gender" | "email">;
   onSuccess: () => void;
 }
 
@@ -55,6 +45,7 @@ export function BookAppointmentDialog({
   onOpenChange,
   defaultDate,
   defaultDoctorId,
+  defaultPatient,
   onSuccess,
 }: BookAppointmentDialogProps) {
   const [step, setStep] = React.useState<1 | 2 | 3 | 4>(1);
@@ -92,11 +83,11 @@ export function BookAppointmentDialog({
       setSelectedDoctorId(defaultDoctorId || "");
       setSelectedDate(defaultDate || today);
       setSelectedSlot("");
-      setPatientName("");
-      setPatientPhone("+91");
-      setPatientAge("");
-      setPatientGender("");
-      setPatientEmail("");
+      setPatientName(defaultPatient?.name ?? "");
+      setPatientPhone(defaultPatient?.phone ?? "+91");
+      setPatientAge(defaultPatient?.age != null ? String(defaultPatient.age) : "");
+      setPatientGender(defaultPatient?.gender ?? "");
+      setPatientEmail(defaultPatient?.email ?? "");
       setNotes("");
 
       async function fetchDoctors() {
@@ -120,7 +111,7 @@ export function BookAppointmentDialog({
       }
       fetchDoctors();
     }
-  }, [open, defaultDate, defaultDoctorId, hospitalId, today]);
+  }, [open, defaultDate, defaultDoctorId, defaultPatient, hospitalId, today]);
 
   // Load slots when doctor or date changes
   React.useEffect(() => {
