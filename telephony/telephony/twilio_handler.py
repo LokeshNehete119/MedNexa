@@ -30,10 +30,11 @@ import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from urllib.parse import quote
-from xml.sax.saxutils import quoteattr
+from xml.sax.saxutils import escape, quoteattr
 
 from fastapi import APIRouter, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import PlainTextResponse, Response
+from twilio.rest import Client
 
 from telephony.api_client import BackendClient
 from telephony.audio_codec import pipeline_to_twilio, twilio_to_pipeline
@@ -109,6 +110,25 @@ def build_twiml(call_sid: str, public_url: str, caller_phone: str, stream_token:
     </Stream>
   </Connect>
 </Response>"""
+
+
+async def transfer_to_staff(call_sid: str) -> bool:
+    """Connect the live call to the staff number (this ends the media stream).
+
+    Returns False, leaving the call alone, when no transfer number or Twilio
+    credentials are configured or Twilio rejects the request."""
+    cfg = get_settings()
+    if not (cfg.transfer_phone_number and cfg.twilio_account_sid and cfg.twilio_auth_token):
+        return False
+    twiml = f"<Response><Dial>{escape(cfg.transfer_phone_number)}</Dial></Response>"
+    try:
+        client = Client(cfg.twilio_account_sid, cfg.twilio_auth_token)
+        await asyncio.to_thread(client.calls(call_sid).update, twiml=twiml)
+    except Exception:
+        log.exception("transfer_failed", call_sid=call_sid)
+        return False
+    log.info("call_transferred", call_sid=call_sid)
+    return True
 
 
 # ── Webhook endpoints ──────────────────────────────────────────────────────────
@@ -249,7 +269,12 @@ async def stream_websocket(websocket: WebSocket, call_sid: str) -> None:
         """Make Twilio discard audio it has buffered but not yet played (barge-in)."""
         await send_json({"event": "clear", "streamSid": stream_sid})
 
-    pipeline = CallPipeline(session_id, caller_phone, send_audio, clear_audio=clear_audio)
+    async def transfer() -> bool:
+        return await transfer_to_staff(call_sid)
+
+    pipeline = CallPipeline(
+        session_id, caller_phone, send_audio, clear_audio=clear_audio, transfer=transfer
+    )
 
     pipeline_task = asyncio.create_task(pipeline.run(audio_generator()))
 

@@ -368,6 +368,73 @@ class TestCallEnd:
         assert mock_api.end_call.await_args.kwargs["outcome"] == "OTHER"
 
 
+class EscalatingAgent(StubAgent):
+    """Asks for a person on the caller's first utterance."""
+
+    escalated = False
+
+    async def process(self, text: str, language: str = "en") -> str:
+        self.escalated = True
+        return "Let me connect you to our staff. Please stay on the line."
+
+
+class TestHandOver:
+    """Two utterances are sent; after the first, the agent hands the call over."""
+
+    @staticmethod
+    def two_utterances(mock_vad: MagicMock) -> AsyncIterator[bytes]:
+        mock_vad.process_chunk.side_effect = [["speech", "speech_end"]] * 2
+
+        async def stream() -> AsyncIterator[bytes]:
+            for _ in range(2):
+                yield _make_speech_chunk(3)
+
+        return stream()
+
+    @staticmethod
+    async def send(chunk: bytes) -> None:
+        pass
+
+    @pytest.mark.asyncio
+    async def test_escalated_call_is_transferred_and_the_ai_stops(
+        self,
+        mock_vad: MagicMock,
+        mock_stt: MagicMock,
+        mock_tts: MagicMock,
+        mock_api: MagicMock,
+        mock_recorder: MagicMock,
+    ) -> None:
+        transfer = AsyncMock(return_value=True)
+        pipeline = CallPipeline(
+            "sess-t", "+911234567890", self.send, transfer=transfer, agent=EscalatingAgent()
+        )
+        await pipeline.run(self.two_utterances(mock_vad))
+
+        transfer.assert_awaited_once()
+        assert mock_stt.transcribe_bytes.call_count == 1  # the AI stopped listening
+        assert mock_api.end_call.await_args.kwargs["escalated_to_human"] is True
+
+    @pytest.mark.parametrize("transfer", [None, AsyncMock(return_value=False)])
+    @pytest.mark.asyncio
+    async def test_caller_is_told_to_call_reception_when_transfer_is_impossible(
+        self,
+        mock_vad: MagicMock,
+        mock_stt: MagicMock,
+        mock_tts: MagicMock,
+        mock_api: MagicMock,
+        mock_recorder: MagicMock,
+        transfer: AsyncMock | None,
+    ) -> None:
+        pipeline = CallPipeline(
+            "sess-n", "+911234567890", self.send, transfer=transfer, agent=EscalatingAgent()
+        )
+        await pipeline.run(self.two_utterances(mock_vad))
+
+        said = [c.args[2] for c in mock_api.append_log.await_args_list if c.args[1] == "ASSISTANT"]
+        assert "call the hospital reception directly" in said[-1]
+        assert mock_stt.transcribe_bytes.call_count == 1
+
+
 @pytest.mark.asyncio
 async def test_backend_client_sends_backend_role_values() -> None:
     from telephony.api_client import BackendClient
