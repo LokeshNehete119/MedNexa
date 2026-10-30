@@ -82,6 +82,7 @@ services:
       MEDNEXA_ADMIN_PASSWORD: ${MEDNEXA_ADMIN_PASSWORD:?Set MEDNEXA_ADMIN_PASSWORD in .env}
       MEDNEXA_SERVICE_API_KEY: ${MEDNEXA_SERVICE_API_KEY:?Set MEDNEXA_SERVICE_API_KEY in .env (openssl rand -hex 32)}
       MEDNEXA_DEFAULT_COUNTRY_CODE: ${MEDNEXA_DEFAULT_COUNTRY_CODE:-91}
+      MEDNEXA_CALL_LOG_RETENTION_DAYS: ${MEDNEXA_CALL_LOG_RETENTION_DAYS:-90}
       # The dashboard passes each browser's address in X-Forwarded-For so sign-in is
       # throttled per person. Safe because the API is only reachable from this network
       # and localhost.

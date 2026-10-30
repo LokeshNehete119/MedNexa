@@ -1,3 +1,6 @@
+import asyncio
+import contextlib
+import logging
 import re
 import uuid
 from collections.abc import AsyncIterator
@@ -12,6 +15,10 @@ from starlette.responses import Response
 from app.api.errors import register_error_handlers
 from app.api.router import api_router
 from app.config import get_settings
+from app.database import SessionFactory
+from app.services import call_service
+
+logger = logging.getLogger(__name__)
 
 # A client-supplied id is only propagated if it is short and made of safe characters;
 # anything else (control characters, huge values) is replaced, so it can't pollute logs.
@@ -29,10 +36,31 @@ class CorrelationIdMiddleware(BaseHTTPMiddleware):
         return response
 
 
+async def purge_old_calls_daily(days: int) -> None:
+    """Enforce the call-log retention period: once at startup, then every 24 hours."""
+    while True:
+        try:
+            async with SessionFactory() as db:
+                deleted = await call_service.purge_calls_older_than(db, days)
+            if deleted:
+                logger.info("Deleted %d call sessions older than %d days", deleted, days)
+        except Exception:
+            logger.exception("Call-log purge failed; retrying in 24 hours")
+        await asyncio.sleep(24 * 60 * 60)
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-    get_settings().require_auth_config()  # refuse to start with unusable auth settings
+    settings = get_settings()
+    settings.require_auth_config()  # refuse to start with unusable auth settings
+    purge = None
+    if settings.call_log_retention_days > 0:
+        purge = asyncio.create_task(purge_old_calls_daily(settings.call_log_retention_days))
     yield
+    if purge is not None:
+        purge.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await purge
 
 
 def create_app() -> FastAPI:
