@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { listHospitals, type HospitalOut } from "@/lib/api";
+import { useAuth } from "@/contexts/AuthContext";
 
 interface HospitalContextType {
   hospital: HospitalOut | null;
@@ -37,9 +38,18 @@ export function HospitalProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
+  // Load once someone is signed in (a request before that is only refused), and forget
+  // the hospital when they sign out.
+  const { isAuthenticated } = useAuth();
   React.useEffect(() => {
-    fetchActiveHospital();
-  }, [fetchActiveHospital]);
+    if (isAuthenticated) {
+      fetchActiveHospital();
+    } else {
+      setHospital(null);
+      setNeedsSetup(false);
+      setError(null);
+    }
+  }, [isAuthenticated, fetchActiveHospital]);
 
   return (
     <HospitalContext.Provider
