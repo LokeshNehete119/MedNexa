@@ -7,6 +7,8 @@ interface HospitalContextType {
   hospital: HospitalOut | null;
   hospitalId: string | undefined;
   isLoading: boolean;
+  /** The database has no hospital yet (a fresh install): staff must create one first. */
+  needsSetup: boolean;
   error: string | null;
   refreshHospital: () => Promise<void>;
 }
@@ -16,6 +18,7 @@ const HospitalContext = React.createContext<HospitalContextType | undefined>(und
 export function HospitalProvider({ children }: { children: React.ReactNode }) {
   const [hospital, setHospital] = React.useState<HospitalOut | null>(null);
   const [isLoading, setIsLoading] = React.useState(true);
+  const [needsSetup, setNeedsSetup] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
 
   const fetchActiveHospital = React.useCallback(async () => {
@@ -23,11 +26,8 @@ export function HospitalProvider({ children }: { children: React.ReactNode }) {
     setError(null);
     try {
       const page = await listHospitals(1, 0);
-      if (page.items && page.items.length > 0) {
-        setHospital(page.items[0]);
-      } else {
-        setError("No active hospital found in the database.");
-      }
+      setHospital(page.items[0] ?? null);
+      setNeedsSetup(page.items.length === 0);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Failed to load hospital data";
       setError(msg);
@@ -47,6 +47,7 @@ export function HospitalProvider({ children }: { children: React.ReactNode }) {
         hospital,
         hospitalId: hospital?.id,
         isLoading,
+        needsSetup,
         error,
         refreshHospital: fetchActiveHospital,
       }}
