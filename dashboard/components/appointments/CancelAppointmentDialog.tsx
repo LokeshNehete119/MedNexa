@@ -112,7 +112,7 @@ export function CancelAppointmentDialog({
             />
           </div>
 
-          <div className="flex items-center gap-2 p-2.5 rounded-md bg-amber-500/10 border border-amber-500/30 text-amber-700 dark:text-amber-400 text-xs">
+          <div className="flex items-center gap-2 p-2.5 rounded-md border border-status-moved/30 text-foreground text-xs">
             <AlertTriangle className="w-4 h-4 shrink-0" />
             <span>This action cannot be undone. You will need to create a new appointment if needed.</span>
           </div>

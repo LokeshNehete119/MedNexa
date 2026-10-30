@@ -6,7 +6,7 @@ const APPOINTMENT: Record<AppointmentStatus, { label: string; tone: string }> = 
   BOOKED: { label: "Booked", tone: "bg-status-booked" },
   COMPLETED: { label: "Completed", tone: "bg-status-done" },
   CANCELLED: { label: "Cancelled", tone: "bg-status-cancelled" },
-  RESCHEDULED: { label: "Moved", tone: "bg-status-moved" },
+  RESCHEDULED: { label: "Rescheduled", tone: "bg-status-moved" },
   NO_SHOW: { label: "No-show", tone: "bg-status-moved" },
 };
 
