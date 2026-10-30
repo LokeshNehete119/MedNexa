@@ -7,11 +7,40 @@ Import `get_logger` everywhere instead of the stdlib `logging` module.
 from __future__ import annotations
 
 import logging
+import re
 import sys
+from collections.abc import MutableMapping
+from typing import Any
 
 import structlog
 
 from telephony.config import get_settings
+
+# Fields holding a caller's number, and free-text fields (what was said) that may
+# contain one. Numbers are logged with only their last 4 digits visible.
+_PHONE_FIELDS = {"caller", "caller_phone", "phone"}
+_TEXT_FIELDS = {"text", "response"}
+# 7+ digits, optionally with a leading + and single spaces/dashes between digits.
+_PHONE_NUMBER = re.compile(r"\+?\d(?:[ -]?\d){6,}")
+
+
+def mask_phone(value: str) -> str:
+    digits = re.sub(r"\D", "", value)
+    return "*" * max(0, len(digits) - 4) + digits[-4:] if len(digits) > 4 else value
+
+
+def redact_phone_numbers(
+    _: Any, __: str, event: MutableMapping[str, Any]
+) -> MutableMapping[str, Any]:
+    """structlog processor: never write a full phone number to the logs."""
+    for key, value in event.items():
+        if not isinstance(value, str):
+            continue
+        if key in _PHONE_FIELDS:
+            event[key] = mask_phone(value)
+        elif key in _TEXT_FIELDS:
+            event[key] = _PHONE_NUMBER.sub(lambda m: mask_phone(m.group()), value)
+    return event
 
 
 def configure_logging() -> None:
@@ -28,6 +57,7 @@ def configure_logging() -> None:
     structlog.configure(
         processors=[
             structlog.contextvars.merge_contextvars,
+            redact_phone_numbers,
             structlog.stdlib.add_log_level,
             structlog.stdlib.add_logger_name,
             structlog.processors.TimeStamper(fmt="iso"),
