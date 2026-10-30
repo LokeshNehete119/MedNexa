@@ -2,616 +2,302 @@
 
 import * as React from "react";
 import Link from "next/link";
+import { Phone, Plus } from "lucide-react";
+import { toast } from "sonner";
 import {
-  CalendarCheck2,
-  CalendarX2,
-  Clock,
-  PhoneCall,
-  RefreshCw,
-  Stethoscope,
-  TrendingUp,
-  User,
-  Bot,
-  Monitor,
-  AlertCircle,
-  ArrowRight,
-  Calendar as CalendarIcon,
-  Search,
-} from "lucide-react";
-import { listAppointments, listDoctors, type AppointmentOut, type DoctorOut } from "@/lib/api";
+  fetchAllPages,
+  getDoctorSlots,
+  listAppointments,
+  listDoctors,
+  listScheduleOverrides,
+  type AppointmentOut,
+  type DoctorOut,
+  type ScheduleOverrideOut,
+} from "@/lib/api";
 import { useHospital } from "@/contexts/HospitalContext";
 import { addDays, isoWeekday, todayIn } from "@/lib/dates";
-import { Card } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
+import { formatDate, formatTime } from "@/lib/format";
+import { PageHeader, StatStrip } from "@/components/page-header";
+import { BookAppointmentDialog } from "@/components/appointments/BookAppointmentDialog";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import { toast } from "sonner";
+import { cn } from "@/lib/utils";
 
-export default function DashboardOverviewPage() {
+// Appointments that belong in a doctor's queue (cancelled and moved ones have left it).
+const IN_QUEUE = new Set(["BOOKED", "COMPLETED", "NO_SHOW"]);
+
+interface DoctorDay {
+  doctor: DoctorOut;
+  onDuty: boolean;
+  start: string;
+  end: string;
+  leaveReason: string | null;
+  openSlots: number;
+  queue: AppointmentOut[];
+}
+
+/** The doctor's hours on `date`: a schedule override wins over the weekly template. */
+function dayFor(
+  doctor: DoctorOut,
+  date: string,
+  override: ScheduleOverrideOut | undefined
+): Pick<DoctorDay, "onDuty" | "start" | "end" | "leaveReason"> {
+  if (override) {
+    return {
+      onDuty: override.is_available,
+      start: override.start_time ?? doctor.slot_start_time,
+      end: override.end_time ?? doctor.slot_end_time,
+      leaveReason: override.is_available ? null : (override.override_reason ?? "On leave"),
+    };
+  }
+  return {
+    onDuty: doctor.available_days.includes(isoWeekday(date)),
+    start: doctor.slot_start_time,
+    end: doctor.slot_end_time,
+    leaveReason: null,
+  };
+}
+
+function nowIn(timeZone?: string): string {
+  try {
+    return new Intl.DateTimeFormat("en-GB", { timeZone, hour: "2-digit", minute: "2-digit", hour12: false }).format(
+      new Date()
+    );
+  } catch {
+    return new Date().toTimeString().slice(0, 5);
+  }
+}
+
+export default function TodayPage() {
   const { hospital, hospitalId } = useHospital();
-
-  // Selected date: null = today in the hospital's timezone, otherwise a picked date
-  const [pickedDate, setPickedDate] = React.useState<string | null>(null);
   const today = todayIn(hospital?.timezone);
-  const tomorrow = addDays(today, 1);
-  const selectedDate = pickedDate ?? today;
-  const setSelectedDate = setPickedDate;
+  const [pickedDate, setPickedDate] = React.useState<string | null>(null);
+  const date = pickedDate ?? today;
+
+  const [days, setDays] = React.useState<DoctorDay[]>([]);
   const [appointments, setAppointments] = React.useState<AppointmentOut[]>([]);
-  const [doctors, setDoctors] = React.useState<DoctorOut[]>([]);
-  const [isLoading, setIsLoading] = React.useState(true);
-  const [isRefreshing, setIsRefreshing] = React.useState(false);
-  const [searchQuery, setSearchQuery] = React.useState("");
-  const [lastUpdated, setLastUpdated] = React.useState<Date>(new Date());
-  const [totalAppointments, setTotalAppointments] = React.useState(0);
+  const [loading, setLoading] = React.useState(true);
+  const [bookingOpen, setBookingOpen] = React.useState(false);
 
-  // Fetch appointments and doctors for the selected date
-  const loadData = React.useCallback(
-    async (showToast = false) => {
-      if (!hospitalId) return; // never query across hospitals while the hospital is loading
-      if (showToast) setIsRefreshing(true);
-      try {
-        const [apptsRes, docsRes] = await Promise.all([
-          listAppointments({ hospital_id: hospitalId, date: selectedDate, limit: 200 }),
-          listDoctors({ hospital_id: hospitalId, limit: 200, include_inactive: false }),
-        ]);
-
-        setAppointments(apptsRes.items || []);
-        setTotalAppointments(apptsRes.total ?? apptsRes.items?.length ?? 0);
-        setDoctors(docsRes.items || []);
-        setLastUpdated(new Date());
-
-        if (showToast) {
-          toast.success("Dashboard data refreshed");
-        }
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : "Failed to load dashboard data";
-        toast.error(msg);
-      } finally {
-        setIsLoading(false);
-        setIsRefreshing(false);
-      }
-    },
-    [selectedDate, hospitalId]
-  );
-
-  // Initial fetch and on selectedDate change
-  React.useEffect(() => {
-    setIsLoading(true);
-    loadData();
-  }, [loadData]);
-
-  // Polling: Auto-refresh every 30 seconds
-  React.useEffect(() => {
-    const interval = setInterval(() => {
-      loadData(false);
-    }, 30000);
-
-    return () => clearInterval(interval);
-  }, [loadData]);
-
-  // Compute ISO Weekday for selected date (1 = Monday ... 7 = Sunday)
-  const dateObj = new Date(selectedDate + "T00:00:00");
-  const weekday = isoWeekday(selectedDate);
-
-  // Active doctors working on this specific weekday
-  const activeDoctorsToday = doctors.filter((doc) =>
-    doc.available_days?.includes(weekday)
-  );
-
-  // Total daily slot capacity for today across working doctors
-  const totalSlotsCapacity = activeDoctorsToday.reduce(
-    (sum, doc) => sum + (doc.max_daily_appointments || 0),
-    0
-  );
-
-  // Appointment counts
-  const bookedCount = appointments.filter((a) => a.status === "BOOKED").length;
-  const cancelledCount = appointments.filter((a) => a.status === "CANCELLED").length;
-  const completedCount = appointments.filter((a) => a.status === "COMPLETED").length;
-  const openSlots = Math.max(0, totalSlotsCapacity - bookedCount);
-
-  // Filtered appointments by search term
-  const filteredAppointments = appointments.filter(
-    (a) =>
-      a.patient_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      a.doctor_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      a.patient_phone.includes(searchQuery)
-  );
-
-  // Format date for display
-  const formattedSelectedDate = new Intl.DateTimeFormat("en-US", {
-    weekday: "long",
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  }).format(dateObj);
-
-  const formatTime = (timeStr: string) => {
-    const [h, m] = timeStr.split(":");
-    const hour = parseInt(h, 10);
-    const ampm = hour >= 12 ? "PM" : "AM";
-    const formattedHour = hour % 12 || 12;
-    return `${formattedHour}:${m} ${ampm}`;
-  };
-
-  const getStatusBadge = (status: string) => {
-    switch (status) {
-      case "BOOKED":
-        return (
-          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-500/20">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-            Booked
-          </span>
-        );
-      case "CANCELLED":
-        return (
-          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-rose-500/10 text-rose-700 dark:text-rose-400 border border-rose-500/20">
-            <span className="w-1.5 h-1.5 rounded-full bg-rose-500" />
-            Cancelled
-          </span>
-        );
-      case "COMPLETED":
-        return (
-          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-blue-500/10 text-blue-700 dark:text-blue-400 border border-blue-500/20">
-            <span className="w-1.5 h-1.5 rounded-full bg-blue-500" />
-            Completed
-          </span>
-        );
-      case "RESCHEDULED":
-        return (
-          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-500/20">
-            <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
-            Rescheduled
-          </span>
-        );
-      default:
-        return (
-          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-muted text-muted-foreground">
-            {status}
-          </span>
-        );
+  const load = React.useCallback(async () => {
+    if (!hospitalId) return;
+    try {
+      const [appts, doctors] = await Promise.all([
+        fetchAllPages((limit, offset) => listAppointments({ hospital_id: hospitalId, date, limit, offset })),
+        listDoctors({ hospital_id: hospitalId, limit: 200 }),
+      ]);
+      const perDoctor = await Promise.all(
+        doctors.items.map(async (doctor) => {
+          const [overrides, slots] = await Promise.all([
+            listScheduleOverrides(doctor.id, { from: date, to: date }),
+            getDoctorSlots(doctor.id, date),
+          ]);
+          const queue = appts.items
+            .filter((a) => a.doctor_id === doctor.id && IN_QUEUE.has(a.status))
+            .sort((a, b) => a.appointment_time.localeCompare(b.appointment_time));
+          const booked = queue.filter((a) => a.status === "BOOKED").length;
+          return {
+            doctor,
+            ...dayFor(doctor, date, overrides[0]),
+            // Free times in the doctor's hours, but never more than the daily cap allows.
+            openSlots: Math.min(slots.length, Math.max(0, doctor.max_daily_appointments - booked)),
+            queue,
+          };
+        })
+      );
+      setAppointments(appts.items);
+      // Doctors on duty, plus anyone off duty who still has patients booked that day.
+      setDays(perDoctor.filter((d) => d.onDuty || d.queue.length > 0));
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Today's queue could not be loaded.");
+    } finally {
+      setLoading(false);
     }
-  };
+  }, [hospitalId, date]);
 
-  const getSourceBadge = (source: string) => {
-    switch (source) {
-      case "AI_CALL":
-        return (
-          <span className="inline-flex items-center gap-1 text-[11px] font-medium text-purple-600 dark:text-purple-400">
-            <Bot className="w-3.5 h-3.5" />
-            AI Phone
-          </span>
-        );
-      case "DASHBOARD":
-        return (
-          <span className="inline-flex items-center gap-1 text-[11px] font-medium text-blue-600 dark:text-blue-400">
-            <Monitor className="w-3.5 h-3.5" />
-            Staff Portal
-          </span>
-        );
-      default:
-        return (
-          <span className="inline-flex items-center gap-1 text-[11px] font-medium text-muted-foreground">
-            <User className="w-3.5 h-3.5" />
-            Walk-in
-          </span>
-        );
-    }
-  };
+  React.useEffect(() => {
+    load();
+    const timer = setInterval(load, 60_000); // calls book appointments while this is open
+    return () => clearInterval(timer);
+  }, [load]);
+
+  const booked = appointments.filter((a) => a.status === "BOOKED");
+  const isToday = date === today;
+  const now = nowIn(hospital?.timezone);
 
   return (
-    <div className="space-y-6">
-      {/* Top Header & Date Navigation */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-2 border-b border-border">
-        <div>
-          <div className="flex items-center gap-2">
-            <span className="text-xl">📊</span>
-            <h1 className="text-2xl font-bold tracking-tight text-foreground">
-              Today&apos;s Overview
-            </h1>
-          </div>
-          <p className="text-sm text-muted-foreground mt-0.5">
-            {formattedSelectedDate} • {hospital?.name ?? "MedNexa City Hospital"}
-          </p>
-        </div>
-
-        {/* Date Filter & Manual Refresh */}
-        <div className="flex flex-wrap items-center gap-2.5">
-          <div className="flex items-center bg-card border border-border rounded-lg p-1 text-xs">
-            <button
-              type="button"
-              onClick={() => setSelectedDate(today)}
-              className={`px-3 py-1.5 rounded-md font-medium transition-colors cursor-pointer ${
-                selectedDate === today
-                  ? "bg-blue-600 text-white shadow-xs"
-                  : "text-muted-foreground hover:text-foreground hover:bg-muted"
-              }`}
-            >
-              Today
-            </button>
-            <button
-              type="button"
-              onClick={() => setSelectedDate(tomorrow)}
-              className={`px-3 py-1.5 rounded-md font-medium transition-colors cursor-pointer ${
-                selectedDate === tomorrow
-                  ? "bg-blue-600 text-white shadow-xs"
-                  : "text-muted-foreground hover:text-foreground hover:bg-muted"
-              }`}
-            >
-              Tomorrow
-            </button>
-          </div>
-
-          {/* Date Picker Input */}
-          <div className="flex items-center gap-1.5 px-2 py-1 bg-card border border-border rounded-lg">
-            <CalendarIcon className="w-3.5 h-3.5 text-muted-foreground" />
-            <input
-              type="date"
-              value={selectedDate}
-              onChange={(e) => e.target.value && setSelectedDate(e.target.value)}
-              className="bg-transparent text-xs text-foreground focus:outline-none cursor-pointer"
-            />
-          </div>
-
-          {/* Refresh Button with 30s status */}
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => loadData(true)}
-            disabled={isRefreshing}
-            className="gap-1.5 text-xs h-9 cursor-pointer"
-            title="Auto-refreshes every 30 seconds"
-          >
-            <RefreshCw
-              className={`w-3.5 h-3.5 text-muted-foreground ${
-                isRefreshing ? "animate-spin text-blue-600" : ""
-              }`}
-            />
-            <span className="hidden sm:inline">Sync</span>
-          </Button>
-        </div>
-      </div>
-
-      {/* 4 Stat Overview Cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
-        {/* Total Capacity */}
-        <Card className="p-4 md:p-5 border-border bg-card shadow-xs">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-              Total Capacity
-            </span>
-            <div className="w-8 h-8 rounded-lg bg-blue-500/10 text-blue-600 dark:text-blue-400 flex items-center justify-center">
-              <CalendarCheck2 className="w-4 h-4" />
-            </div>
-          </div>
-          <div className="mt-3 flex items-baseline gap-2">
-            <span className="text-2xl md:text-3xl font-extrabold text-foreground">
-              {isLoading ? "..." : totalSlotsCapacity}
-            </span>
-            <span className="text-xs text-muted-foreground">
-              across {activeDoctorsToday.length} doctor{activeDoctorsToday.length === 1 ? "" : "s"}
-            </span>
-          </div>
-        </Card>
-
-        {/* Booked Appointments */}
-        <Card className="p-4 md:p-5 border-border bg-card shadow-xs">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-emerald-600 dark:text-emerald-400 uppercase tracking-wider">
-              Booked
-            </span>
-            <div className="w-8 h-8 rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 flex items-center justify-center">
-              <TrendingUp className="w-4 h-4" />
-            </div>
-          </div>
-          <div className="mt-3 flex items-baseline gap-2">
-            <span className="text-2xl md:text-3xl font-extrabold text-foreground">
-              {isLoading ? "..." : bookedCount}
-            </span>
-            <span className="text-xs text-emerald-600 dark:text-emerald-400 font-medium">
-              {totalSlotsCapacity > 0
-                ? `${Math.round((bookedCount / totalSlotsCapacity) * 100)}% filled`
-                : `${bookedCount} active`}
-            </span>
-          </div>
-        </Card>
-
-        {/* Cancelled Slots */}
-        <Card className="p-4 md:p-5 border-border bg-card shadow-xs">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-rose-600 dark:text-rose-400 uppercase tracking-wider">
-              Cancelled
-            </span>
-            <div className="w-8 h-8 rounded-lg bg-rose-500/10 text-rose-600 dark:text-rose-400 flex items-center justify-center">
-              <CalendarX2 className="w-4 h-4" />
-            </div>
-          </div>
-          <div className="mt-3 flex items-baseline gap-2">
-            <span className="text-2xl md:text-3xl font-extrabold text-foreground">
-              {isLoading ? "..." : cancelledCount}
-            </span>
-            <span className="text-xs text-muted-foreground">re-released</span>
-          </div>
-        </Card>
-
-        {/* Open Slots Available */}
-        <Card className="p-4 md:p-5 border-border bg-card shadow-xs">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-amber-600 dark:text-amber-400 uppercase tracking-wider">
-              Open Slots
-            </span>
-            <div className="w-8 h-8 rounded-lg bg-amber-500/10 text-amber-600 dark:text-amber-400 flex items-center justify-center">
-              <Clock className="w-4 h-4" />
-            </div>
-          </div>
-          <div className="mt-3 flex items-baseline gap-2">
-            <span className="text-2xl md:text-3xl font-extrabold text-foreground">
-              {isLoading ? "..." : openSlots}
-            </span>
-            <span className="text-xs text-muted-foreground">free to book</span>
-          </div>
-        </Card>
-      </div>
-
-      {/* Main Grid: Upcoming Appointments + Active Doctors */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Left Column: Upcoming Appointments Table (2 Cols Wide) */}
-        <div className="lg:col-span-2 space-y-4">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            <div>
-              <h2 className="text-base font-bold text-foreground">
-                Upcoming Appointments
-              </h2>
-              <p className="text-xs text-muted-foreground">
-                Showing scheduled patient consultations for {selectedDate}
-                {totalAppointments > appointments.length &&
-                  ` (first ${appointments.length} of ${totalAppointments}; counts below cover only these)`}
-              </p>
-            </div>
-
-            {/* Quick Search */}
-            <div className="relative w-full sm:w-64">
-              <Search className="w-3.5 h-3.5 absolute left-2.5 top-2.5 text-muted-foreground" />
-              <Input
-                placeholder="Search patient, phone, doctor..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-8 h-8 text-xs bg-card"
-              />
-            </div>
-          </div>
-
-          <Card className="border-border bg-card overflow-hidden shadow-xs">
-            {isLoading ? (
-              <div className="p-4 space-y-3">
-                {[1, 2, 3, 4].map((i) => (
-                  <div key={i} className="flex items-center justify-between gap-4 py-2 border-b border-border/50">
-                    <div className="flex items-center gap-3">
-                      <div className="w-8 h-8 rounded-lg bg-muted animate-pulse" />
-                      <div className="space-y-1">
-                        <div className="w-28 h-3.5 bg-muted animate-pulse rounded" />
-                        <div className="w-20 h-2.5 bg-muted/60 animate-pulse rounded" />
-                      </div>
-                    </div>
-                    <div className="hidden sm:block space-y-1">
-                      <div className="w-24 h-3.5 bg-muted animate-pulse rounded" />
-                      <div className="w-16 h-2.5 bg-muted/60 animate-pulse rounded" />
-                    </div>
-                    <div className="w-16 h-5 rounded-full bg-muted animate-pulse" />
-                    <div className="w-12 h-6 rounded bg-muted animate-pulse" />
-                  </div>
-                ))}
-              </div>
-            ) : filteredAppointments.length === 0 ? (
-              /* Empty State */
-              <div className="p-8 md:p-12 text-center space-y-4">
-                <div className="w-12 h-12 rounded-2xl bg-muted text-muted-foreground flex items-center justify-center mx-auto">
-                  <CalendarX2 className="w-6 h-6" />
-                </div>
-                <div className="space-y-1">
-                  <h3 className="text-sm font-semibold text-foreground">
-                    No appointments found for {selectedDate}
-                  </h3>
-                  <p className="text-xs text-muted-foreground max-w-sm mx-auto">
-                    {searchQuery
-                      ? "No records matched your search query. Try clearing the filter."
-                      : "There are no booked patient slots for this date."}
-                  </p>
-                </div>
-
-                <div className="flex items-center justify-center gap-3 pt-2">
-                  {selectedDate !== tomorrow && (
-                    <Button
-                      size="sm"
-                      onClick={() => setSelectedDate(tomorrow)}
-                      className="gap-1.5 text-xs bg-blue-600 hover:bg-blue-700 text-white cursor-pointer"
-                    >
-                      <span>View tomorrow</span>
-                      <ArrowRight className="w-3.5 h-3.5" />
-                    </Button>
+    <>
+      <PageHeader
+        title={isToday ? "Today" : formatDate(date)}
+        description={
+          isToday
+            ? formatDate(date)
+            : date === addDays(today, 1)
+              ? "Tomorrow"
+              : "Queue for another day"
+        }
+        actions={
+          <>
+            <div className="flex rounded-md border border-border bg-card p-0.5 text-sm" role="group" aria-label="Day">
+              {[
+                { label: "Today", value: today },
+                { label: "Tomorrow", value: addDays(today, 1) },
+              ].map((option) => (
+                <button
+                  key={option.label}
+                  type="button"
+                  onClick={() => setPickedDate(option.value === today ? null : option.value)}
+                  aria-pressed={date === option.value}
+                  className={cn(
+                    "cursor-pointer rounded px-3 py-1",
+                    date === option.value ? "bg-accent font-medium text-accent-foreground" : "text-muted-foreground hover:text-foreground"
                   )}
-                  <Link
-                    href="/appointments"
-                    className="px-3 py-1.5 text-xs rounded-lg border border-border bg-card hover:bg-muted font-medium text-foreground transition-colors"
-                  >
-                    Manage Appointments
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+            <Input
+              type="date"
+              aria-label="Pick a date"
+              value={date}
+              onChange={(e) => e.target.value && setPickedDate(e.target.value === today ? null : e.target.value)}
+              className="h-8 w-auto bg-card"
+            />
+            <Button onClick={() => setBookingOpen(true)}>
+              <Plus /> Book appointment
+            </Button>
+          </>
+        }
+      />
+
+      <StatStrip
+        items={[
+          { label: "Booked", value: loading ? "–" : booked.length },
+          { label: "Open slots", value: loading ? "–" : days.reduce((n, d) => n + d.openSlots, 0) },
+          { label: "Doctors on duty", value: loading ? "–" : days.filter((d) => d.onDuty).length },
+          {
+            label: "Booked by phone",
+            value: loading ? "–" : booked.filter((a) => a.booking_source === "AI_CALL").length,
+          },
+          {
+            label: "Cancelled",
+            value: loading ? "–" : appointments.filter((a) => a.status === "CANCELLED").length,
+          },
+        ]}
+      />
+
+      {loading ? (
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+          {[0, 1, 2].map((i) => (
+            <div key={i} className="h-64 animate-pulse rounded-lg border border-border bg-card" />
+          ))}
+        </div>
+      ) : days.length === 0 ? (
+        <div className="rounded-lg border border-border bg-card px-6 py-10">
+          <h2 className="text-sm font-semibold">No doctors are seeing patients on {formatDate(date)}</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Doctors&apos; working days are set on their schedule page.
+          </p>
+          <Link href="/doctors" className={cn(buttonVariants({ variant: "outline", size: "sm" }), "mt-4")}>
+            Go to doctors
+          </Link>
+        </div>
+      ) : (
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+          {days.map((day) => {
+            const next = isToday
+              ? day.queue.find((a) => a.status === "BOOKED" && a.appointment_time.slice(0, 5) >= now)
+              : undefined;
+            return (
+              <section key={day.doctor.id} className="flex flex-col rounded-lg border border-border bg-card">
+                <header className="border-b border-border px-4 py-3">
+                  <Link href={`/doctors/${day.doctor.id}`} className="font-semibold hover:underline">
+                    {day.doctor.name}
                   </Link>
-                </div>
-              </div>
-            ) : (
-              /* Appointments Table */
-              <div className="overflow-x-auto">
-                <Table>
-                  <TableHeader>
-                    <TableRow className="border-b border-border bg-muted/40">
-                      <TableHead className="w-16 text-xs font-semibold">Token</TableHead>
-                      <TableHead className="text-xs font-semibold">Time</TableHead>
-                      <TableHead className="text-xs font-semibold">Patient</TableHead>
-                      <TableHead className="text-xs font-semibold">Doctor &amp; Dept</TableHead>
-                      <TableHead className="text-xs font-semibold">Status</TableHead>
-                      <TableHead className="text-xs font-semibold">Source</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {filteredAppointments.map((appt) => (
-                      <TableRow
-                        key={appt.id}
-                        className="border-b border-border hover:bg-muted/30 transition-colors"
-                      >
-                        {/* Token # */}
-                        <TableCell className="font-mono text-xs font-bold text-blue-600 dark:text-blue-400">
-                          #{String(appt.token_number).padStart(2, "0")}
-                        </TableCell>
+                  <p className="text-[13px] text-muted-foreground">
+                    {day.doctor.speciality}
+                    {day.onDuty && (
+                      <>
+                        , <time>{formatTime(day.start)}</time> to <time>{formatTime(day.end)}</time>
+                      </>
+                    )}
+                  </p>
+                  <p className="tabular mt-2 text-[13px]">
+                    {day.onDuty ? (
+                      <>
+                        <span className="font-medium">{day.queue.length}</span> of{" "}
+                        {day.doctor.max_daily_appointments} booked
+                        <span className="text-muted-foreground">
+                          {day.openSlots > 0 ? `, ${day.openSlots} open` : ", no slots left"}
+                        </span>
+                      </>
+                    ) : (
+                      <span className="text-status-cancelled">{day.leaveReason ?? "Not working this day"}</span>
+                    )}
+                  </p>
+                </header>
 
-                        {/* Appointment Time */}
-                        <TableCell className="text-xs font-medium text-foreground">
-                          <div className="flex items-center gap-1.5">
-                            <Clock className="w-3.5 h-3.5 text-muted-foreground" />
-                            <span>{formatTime(appt.appointment_time)}</span>
-                          </div>
-                          <span className="text-[10px] text-muted-foreground">
-                            {appt.slot_duration_minutes} min slot
-                          </span>
-                        </TableCell>
-
-                        {/* Patient Name & Phone */}
-                        <TableCell className="text-xs">
-                          <div className="font-semibold text-foreground">
-                            {appt.patient_name}
-                          </div>
-                          <div className="text-[11px] text-muted-foreground font-mono">
-                            {appt.patient_phone}
-                          </div>
-                        </TableCell>
-
-                        {/* Doctor & Department */}
-                        <TableCell className="text-xs">
-                          <div className="font-medium text-foreground">
-                            {appt.doctor_name}
-                          </div>
-                          <div className="text-[11px] text-muted-foreground">
-                            {appt.department}
-                          </div>
-                        </TableCell>
-
-                        {/* Status Badge */}
-                        <TableCell>{getStatusBadge(appt.status)}</TableCell>
-
-                        {/* Booking Source */}
-                        <TableCell>{getSourceBadge(appt.booking_source)}</TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
-            )}
-          </Card>
+                {day.queue.length === 0 ? (
+                  <p className="px-4 py-6 text-sm text-muted-foreground">No patients booked yet.</p>
+                ) : (
+                  <ol className="divide-y divide-border">
+                    {day.queue.map((appt) => {
+                      const done = appt.status !== "BOOKED";
+                      const isNext = appt.id === next?.id;
+                      return (
+                        <li key={appt.id}>
+                          <Link
+                            href={`/appointments/${appt.id}`}
+                            className={cn(
+                              "grid grid-cols-[3.25rem_1fr_auto] items-center gap-3 px-4 py-2.5 hover:bg-muted/60",
+                              isNext && "bg-accent/60 shadow-[inset_2px_0_0_var(--primary)]"
+                            )}
+                          >
+                            <span
+                              className={cn(
+                                "tabular text-[26px] leading-none font-semibold tracking-tight",
+                                done ? "text-muted-foreground/60" : "text-foreground"
+                              )}
+                              aria-label={`Token ${appt.token_number}`}
+                            >
+                              {appt.token_number}
+                            </span>
+                            <span className="min-w-0">
+                              <span className={cn("block truncate text-sm font-medium", done && "text-muted-foreground")}>
+                                {appt.patient_name}
+                              </span>
+                              <span className="flex items-center gap-1.5 text-[13px] text-muted-foreground">
+                                <time>{formatTime(appt.appointment_time)}</time>
+                                {appt.booking_source === "AI_CALL" && (
+                                  <Phone className="size-3" aria-label="Booked by phone" />
+                                )}
+                                {appt.status === "NO_SHOW" && "No-show"}
+                                {appt.status === "COMPLETED" && "Seen"}
+                              </span>
+                            </span>
+                            {isNext && <span className="text-xs font-medium text-primary">Next</span>}
+                          </Link>
+                        </li>
+                      );
+                    })}
+                  </ol>
+                )}
+              </section>
+            );
+          })}
         </div>
+      )}
 
-        {/* Right Column: Active Doctors On Duty (1 Col Wide) */}
-        <div className="space-y-4">
-          <div>
-            <h2 className="text-base font-bold text-foreground">
-              Doctors on Duty
-            </h2>
-            <p className="text-xs text-muted-foreground">
-              {activeDoctorsToday.length} practitioner{activeDoctorsToday.length === 1 ? "" : "s"} scheduled today
-            </p>
-          </div>
-
-          <Card className="p-4 border-border bg-card shadow-xs space-y-3">
-            {activeDoctorsToday.length === 0 ? (
-              <div className="py-8 text-center space-y-2">
-                <AlertCircle className="w-8 h-8 text-muted-foreground mx-auto" />
-                <p className="text-xs text-muted-foreground">
-                  No doctors scheduled on {dateObj.toLocaleDateString("en-US", { weekday: "long" })}s.
-                </p>
-              </div>
-            ) : (
-              <div className="divide-y divide-border">
-                {activeDoctorsToday.map((doc) => {
-                  const docAppointments = appointments.filter(
-                    (a) => a.doctor_id === doc.id && a.status === "BOOKED"
-                  );
-                  const isFull = docAppointments.length >= doc.max_daily_appointments;
-
-                  return (
-                    <div key={doc.id} className="py-3 first:pt-0 last:pb-0 space-y-1.5">
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="flex items-center gap-2">
-                          <div className="w-7 h-7 rounded-lg bg-blue-500/10 text-blue-600 flex items-center justify-center shrink-0">
-                            <Stethoscope className="w-3.5 h-3.5" />
-                          </div>
-                          <div>
-                            <h4 className="text-xs font-bold text-foreground">
-                              {doc.name}
-                            </h4>
-                            <p className="text-[11px] text-muted-foreground">
-                              {doc.speciality}
-                            </p>
-                          </div>
-                        </div>
-
-                        <span
-                          className={`text-[10px] px-1.5 py-0.5 rounded-full font-semibold shrink-0 ${
-                            isFull
-                              ? "bg-rose-500/10 text-rose-600 border border-rose-500/20"
-                              : "bg-emerald-500/10 text-emerald-600 border border-emerald-500/20"
-                          }`}
-                        >
-                          {isFull ? "Full" : "Available"}
-                        </span>
-                      </div>
-
-                      <div className="flex items-center justify-between text-[11px] text-muted-foreground pt-0.5">
-                        <span>
-                          {formatTime(doc.slot_start_time)} – {formatTime(doc.slot_end_time)}
-                        </span>
-                        <span className="font-medium text-foreground">
-                          {docAppointments.length} / {doc.max_daily_appointments} slots
-                        </span>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-
-            <div className="pt-2 border-t border-border">
-              <Link
-                href="/doctors"
-                className="inline-flex items-center justify-center w-full py-2 text-xs font-semibold text-blue-600 dark:text-blue-400 hover:bg-muted/50 rounded-lg transition-colors gap-1.5"
-              >
-                <span>View Full Medical Roster</span>
-                <ArrowRight className="w-3 h-3" />
-              </Link>
-            </div>
-          </Card>
-
-          {/* AI Receptionist Quick Status Box */}
-          <Card className="p-4 border-blue-500/20 bg-blue-500/5 shadow-xs space-y-2">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-1.5 text-xs font-semibold text-foreground">
-                <Bot className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
-                <span>AI Auto-Booking Active</span>
-              </div>
-              <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-bold uppercase">
-                Sync 30s
-              </span>
-            </div>
-            <p className="text-[11px] text-muted-foreground leading-relaxed">
-              When callers book through the phone system, appointments will automatically appear here with assigned tokens.
-            </p>
-          </Card>
-        </div>
-      </div>
-    </div>
+      <BookAppointmentDialog
+        open={bookingOpen}
+        onOpenChange={setBookingOpen}
+        defaultDate={date}
+        onSuccess={() => {
+          setBookingOpen(false);
+          load();
+        }}
+      />
+    </>
   );
 }
