@@ -36,6 +36,9 @@ async def list_appointments(
     date_from: date | None = None,
     date_to: date | None = None,
     status: AppointmentStatus | None = None,
+    q: Annotated[
+        str | None, Query(max_length=100, description="Patient name, phone digits or token")
+    ] = None,
 ) -> Page[AppointmentOut]:
     items, total = await appointment_service.list_appointments(
         db,
@@ -46,6 +49,7 @@ async def list_appointments(
         date_from=date_from,
         date_to=date_to,
         status=status,
+        q=q,
         limit=paging.limit,
         offset=paging.offset,
     )
