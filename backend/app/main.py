@@ -20,6 +20,28 @@ from app.services import call_service
 
 logger = logging.getLogger(__name__)
 
+# Staff search by phone (?phone=..., ?caller_phone=...); the access log keeps only the
+# last 4 digits of those numbers.
+_PHONE_QUERY = re.compile(r"((?:^|[?&])(?:caller_)?phone=)([^&]*)")
+
+
+def _mask_digits(value: str) -> str:
+    prefix = re.match(r"(?i)(%2B|\+)?", value).group()  # type: ignore[union-attr]
+    return prefix + re.sub(r"\d(?=(?:\D*\d){4})", "*", value[len(prefix) :])
+
+
+class MaskPhoneNumbersInAccessLog(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        # uvicorn.access args: (client_addr, method, path_with_query, http_version, status)
+        args = record.args
+        if isinstance(args, tuple) and len(args) >= 3 and isinstance(args[2], str):
+            path = _PHONE_QUERY.sub(lambda m: m.group(1) + _mask_digits(m.group(2)), args[2])
+            record.args = (*args[:2], path, *args[3:])
+        return True
+
+
+logging.getLogger("uvicorn.access").addFilter(MaskPhoneNumbersInAccessLog())
+
 # A client-supplied id is only propagated if it is short and made of safe characters;
 # anything else (control characters, huge values) is replaced, so it can't pollute logs.
 _SAFE_CORRELATION_ID = re.compile(r"[A-Za-z0-9._-]{1,64}")
