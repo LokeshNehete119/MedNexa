@@ -116,7 +116,8 @@ def create_app() -> FastAPI:
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="viewport"
+          content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>MedNexa Phone Agent</title>
     <style>
         * { box-sizing: border-box; }
@@ -250,7 +251,8 @@ def create_app() -> FastAPI:
                 }
             });
 
-            audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+            const AudioCtx = window.AudioContext || window.webkitAudioContext;
+            audioContext = new AudioCtx({ sampleRate: 16000 });
             nextPlayTime = audioContext.currentTime;
 
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -265,7 +267,8 @@ def create_app() -> FastAPI:
                 statusPill.textContent = "🟢 Connected (Speak now)";
                 callBtn.className = "btn-call hangup";
                 btnLabel.textContent = "Tap to End Call";
-                instBox.innerHTML = "🎙️ <b>Call in progress:</b><br>Speak now! Receptionist is listening.";
+                instBox.innerHTML =
+                    "🎙️ <b>Call in progress:</b><br>Speak now! Receptionist is listening.";
                 setupMic();
             };
 
