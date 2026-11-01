@@ -1,4 +1,4 @@
-// ─── Enums ────────────────────────────────────────────────────────────────────
+// Enums
 export type AppointmentStatus =
   | "BOOKED"
   | "CANCELLED"
@@ -20,7 +20,7 @@ export type CallOutcome =
 export type CallRole = "USER" | "ASSISTANT" | "TOOL" | "SYSTEM";
 export type Gender = "MALE" | "FEMALE" | "OTHER";
 
-// ─── Pagination wrapper ───────────────────────────────────────────────────────
+// Pagination wrapper
 export interface Page<T> {
   items: T[];
   total: number;
@@ -28,7 +28,7 @@ export interface Page<T> {
   offset: number;
 }
 
-// ─── Hospital ─────────────────────────────────────────────────────────────────
+// Hospital
 export interface HospitalOut {
   id: string;
   name: string;
@@ -70,7 +70,7 @@ export interface HospitalUpdate {
   is_active?: boolean | null;
 }
 
-// ─── Hospital Info ─────────────────────────────────────────────────────────────
+// Hospital Info
 export interface HospitalInfoOut {
   id: string;
   hospital_id: string;
@@ -94,7 +94,7 @@ export interface HospitalInfoUpdate {
   is_active?: boolean | null;
 }
 
-// ─── Doctor ───────────────────────────────────────────────────────────────────
+// Doctor
 export interface DoctorOut {
   id: string;
   hospital_id: string;
@@ -145,7 +145,7 @@ export interface DoctorUpdate {
   bio?: string | null;
 }
 
-// ─── Schedule Override ────────────────────────────────────────────────────────
+// Schedule Override
 export interface ScheduleOverrideOut {
   id: string;
   doctor_id: string;
@@ -164,7 +164,7 @@ export interface ScheduleOverrideIn {
   override_reason?: string | null;
 }
 
-// ─── Slot ─────────────────────────────────────────────────────────────────────
+// Slot
 export interface SlotOut {
   start: string;
   end: string;
@@ -180,7 +180,7 @@ export interface DoctorSlotOut {
   end: string;
 }
 
-// ─── Patient ──────────────────────────────────────────────────────────────────
+// Patient
 export interface PatientOut {
   id: string;
   hospital_id: string;
@@ -215,7 +215,7 @@ export interface PatientUpdate {
   address?: string | null;
 }
 
-// ─── Appointment ──────────────────────────────────────────────────────────────
+// Appointment
 export interface AppointmentOut {
   id: string;
   patient_id: string;
@@ -267,7 +267,7 @@ export interface RescheduleRequest {
   new_time: string;
 }
 
-// ─── Call ─────────────────────────────────────────────────────────────────────
+// Call
 export interface CallSessionOut {
   id: string;
   hospital_id: string;

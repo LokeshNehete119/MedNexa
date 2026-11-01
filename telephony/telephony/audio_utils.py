@@ -1,15 +1,4 @@
-"""Audio quality utilities: noise suppression and gain normalisation.
-
-These are optional but meaningful for hospital telephony where background
-noise (waiting-room chatter, PA announcements) is common.
-
-Currently provides:
-  - ``normalise_audio``: peak-normalise PCM audio to a target level
-  - ``apply_high_pass``: remove low-frequency hum (HVAC, phone line buzz)
-  - ``AudioProcessor``: convenience wrapper that applies all filters
-
-All functions operate on raw int16 PCM bytes at 16 kHz mono.
-"""
+"""Cleaning up caller audio (16 kHz mono int16): removing hum and levelling volume."""
 
 from __future__ import annotations
 
@@ -125,7 +114,6 @@ class AudioProcessor:
         self._prev_y = 0.0
 
     def process(self, raw: bytes) -> bytes:
-        """Apply all enabled filters in sequence."""
         if not raw:
             return raw
         out = raw

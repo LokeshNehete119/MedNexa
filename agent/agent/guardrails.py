@@ -1,4 +1,4 @@
-"""Output guardrails applied to every reply before it is spoken (task 2.10).
+"""Output guardrails applied to every reply before it is spoken.
 
 Checks, in order:
 - empty reply             -> ask the caller to repeat

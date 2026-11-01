@@ -95,7 +95,7 @@ def mock_recorder(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
     return recorder
 
 
-# ── Tests ─────────────────────────────────────────────────────────────────────
+# Tests
 
 
 class TestPipelineGreeting:

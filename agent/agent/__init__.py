@@ -1,4 +1,4 @@
-"""MedNexa Part 2: the AI receptionist agent.
+"""The MedNexa AI receptionist.
 
 from agent import MedNexaAgent
 agent = MedNexaAgent(caller_phone, hospital_id)

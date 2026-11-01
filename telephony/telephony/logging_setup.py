@@ -1,8 +1,4 @@
-"""Structured logging setup for the telephony pipeline.
-
-Uses structlog for JSON-formatted logs with per-call correlation IDs.
-Import `get_logger` everywhere instead of the stdlib `logging` module.
-"""
+"""JSON logs through structlog, with callers' phone numbers masked."""
 
 from __future__ import annotations
 
@@ -44,7 +40,6 @@ def redact_phone_numbers(
 
 
 def configure_logging() -> None:
-    """Call once at startup (in main.py)."""
     settings = get_settings()
     level = getattr(logging, settings.log_level.upper(), logging.INFO)
 
@@ -66,8 +61,7 @@ def configure_logging() -> None:
             structlog.processors.JSONRenderer(),
         ],
         wrapper_class=structlog.make_filtering_bound_logger(level),
-        # Use stdlib LoggerFactory so that add_logger_name can read .name
-        # from the underlying logging.Logger (PrintLogger has no .name attr).
+        # add_logger_name needs a stdlib logger; PrintLogger has no name.
         logger_factory=structlog.stdlib.LoggerFactory(),
         cache_logger_on_first_use=True,
     )

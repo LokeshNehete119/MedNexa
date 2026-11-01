@@ -1,4 +1,4 @@
-"""System prompt with hospital context loaded from the database (task 2.6).
+"""System prompt with hospital context loaded from the database.
 
 Patient data is never put in the prompt; the agent fetches it per call via tools.
 """

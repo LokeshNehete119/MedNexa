@@ -42,7 +42,7 @@ from app.services.slot_service import DayPlan, is_bookable_doctor, load_day_plan
 SLOT_INDEX = "uq_appointment_doctor_slot_booked"
 
 
-# --- internals ----------------------------------------------------------------------
+# Internals
 
 
 async def _lock_doctor(db: AsyncSession, doctor_id: uuid.UUID) -> Doctor:
@@ -166,7 +166,7 @@ def _ensure_changeable(appt: Appointment, *, allow_past: bool, now: datetime | N
         raise NotCancellable("Appointment time has already passed")
 
 
-# --- booking ------------------------------------------------------------------------
+# Booking
 
 
 async def book_appointment(
@@ -201,7 +201,7 @@ async def book_appointment(
         raise
 
 
-# --- cancellation -------------------------------------------------------------------
+# Cancellation
 
 
 async def _cancel(
@@ -249,7 +249,7 @@ async def cancel_appointment_by_staff(
     return await _cancel(db, appointment_id, reason, caller_phone=None, now=None)
 
 
-# --- rescheduling -------------------------------------------------------------------
+# Rescheduling
 
 
 async def _reschedule(
@@ -320,7 +320,7 @@ async def reschedule_appointment_by_staff(
     return await _reschedule(db, appointment_id, new_date, new_time, caller_phone=None, now=None)
 
 
-# --- caller lookups -----------------------------------------------------------------
+# Caller lookups
 
 
 async def get_patient_appointments(
@@ -372,7 +372,7 @@ async def get_patient_appointments(
     return [AppointmentOut.from_model(a) for a in await db.scalars(query)]
 
 
-# --- staff / dashboard --------------------------------------------------------------
+# Staff / dashboard
 
 
 async def get_appointment(db: AsyncSession, appointment_id: uuid.UUID) -> AppointmentOut:

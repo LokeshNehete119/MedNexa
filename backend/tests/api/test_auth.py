@@ -96,7 +96,7 @@ async def test_auth_me_with_real_unoverridden_dependency():
         assert res_ok.json()["email"] == "admin@hospital.com"
 
 
-# --- everything below runs against the real auth dependencies (no overrides) ----------
+# Everything below runs against the real auth dependencies (no overrides)
 
 from collections.abc import AsyncIterator  # noqa: E402
 
@@ -185,7 +185,7 @@ async def test_a_server_without_a_signing_secret_accepts_no_token(
     assert (await anon.get("/api/v1/hospitals", headers=headers)).status_code == 503
 
 
-# --- service key (telephony) ---------------------------------------------------------
+# Service key (telephony)
 
 
 def service_headers() -> dict[str, str]:
@@ -235,7 +235,7 @@ async def test_wrong_or_disabled_service_key_is_rejected(
     ).status_code == 401
 
 
-# --- startup validation -------------------------------------------------------------
+# Startup validation
 
 
 def test_unusable_auth_configuration_is_listed_in_full() -> None:
@@ -262,7 +262,7 @@ async def test_server_refuses_to_start_without_a_signing_secret(
             pass
 
 
-# --- correlation ids ---------------------------------------------------------------
+# Correlation ids
 
 
 async def test_safe_correlation_id_is_echoed_and_unsafe_one_replaced(anon: AsyncClient) -> None:

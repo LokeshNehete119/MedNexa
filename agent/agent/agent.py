@@ -1,6 +1,6 @@
 """MedNexaAgent: one instance per phone call.
 
-Implements Part 3's AgentInterface (telephony/telephony/agent_interface.py):
+Used by the call pipeline through telephony.agent_interface.AgentInterface:
 
     agent = MedNexaAgent(caller_phone, hospital_id)
     await agent.get_greeting()
@@ -76,7 +76,7 @@ class MedNexaAgent:
         self._config: RunnableConfig = {"configurable": {"thread_id": str(uuid.uuid4())}}
         self._graph = build_graph(self.router, self.ctx, self.settings, self._system_prompt)
 
-    # --- AgentInterface -------------------------------------------------------------
+    # AgentInterface
 
     async def get_greeting(self) -> str:
         try:
@@ -117,7 +117,7 @@ class MedNexaAgent:
             summary = f"{summary or ''} Escalated: {self.ctx.escalation_reason}.".strip()
         return summary
 
-    # --- extras for the call pipeline -----------------------------------------------
+    # Extras for the call pipeline
 
     @property
     def escalated(self) -> bool:
@@ -128,7 +128,7 @@ class MedNexaAgent:
         """Backend CallOutcome value (BOOKED, CANCELLED, ..., ESCALATED, OTHER)."""
         return "ESCALATED" if self.escalated else self.ctx.events.outcome()
 
-    # --- internals ------------------------------------------------------------------
+    # Internals
 
     async def _hospital_context(self) -> HospitalContext:
         if self._hospital is None:

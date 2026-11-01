@@ -1,7 +1,7 @@
 """Domain exceptions raised by the service layer.
 
 Each carries a stable machine-readable `code`. The API maps them to HTTP errors
-(see app/api/errors.py) and the agent tools (Part 2) turn them into short
+(see app/api/errors.py) and the agent tools turn them into short
 messages the LLM can explain to the caller.
 """
 

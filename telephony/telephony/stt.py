@@ -1,20 +1,9 @@
-"""Speech-to-Text engine using Faster-Whisper.
+"""Speech to text with Faster-Whisper.
 
-Faster-Whisper is a CTranslate2-based reimplementation of Whisper that runs
-~4x faster on CPU and 2x faster on GPU vs. the original OpenAI Whisper.
-
-This module provides:
-  - ``FasterWhisperSTT``: main engine class (singleton-friendly)
-  - ``TranscriptionResult``: typed output with text + detected language
-
-Language detection strategy (task 3.5):
-  - Whisper detects the language of every utterance (it is never forced to the
-    previous turn's language, so callers can switch mid-call).
-  - "hi" and "ur" (Whisper often labels spoken Hindi as Urdu) map to "hi".
-  - Any other detected language is re-transcribed as whichever of en/hi Whisper
-    rated more likely.
-
-The Whisper model is loaded once per process and shared by all calls.
+Unless a language is given, Whisper detects it for every utterance, so callers can
+switch mid-call. Whisper often labels spoken Hindi as Urdu, so "ur" counts as Hindi;
+any other language is transcribed again as whichever of English or Hindi it rated
+more likely.
 """
 
 from __future__ import annotations
@@ -31,7 +20,6 @@ from telephony.logging_setup import get_logger
 
 log = get_logger("stt")
 
-# Languages the system officially supports.
 SUPPORTED_LANGUAGES = {"en", "hi"}
 DEFAULT_LANGUAGE = "en"
 # Whisper codes that mean one of our languages.
@@ -47,15 +35,8 @@ class TranscriptionResult:
 
 
 class FasterWhisperSTT:
-    """Faster-Whisper STT engine.
-
-    The model is downloaded on first instantiation (~1.5 GB for large-v3) and
-    cached in ~/.cache/huggingface by default.  Use ``whisper_model_size``
-    in config to use a smaller model during development.
-
-    One instance can be shared across concurrent calls because Faster-Whisper
-    is thread-safe for inference.
-    """
+    """Whisper speech recognition. The model downloads on first use and is shared
+    by all calls in the process."""
 
     # One model per (size, device, compute type), shared by every call in the process.
     _models: dict[tuple[str, str, str], Any] = {}
@@ -101,20 +82,14 @@ class FasterWhisperSTT:
                 log.info("whisper_loaded", model=self._model_size)
         self._model = self._models[key]
 
-    # ── public API ────────────────────────────────────────────────────────────
-
     def transcribe_bytes(
         self,
         audio_bytes: bytes,
         *,
         language_hint: str | None = None,
     ) -> TranscriptionResult:
-        """Transcribe raw PCM audio bytes (16 kHz, mono, int16 LE).
-
-        Blocking (CPU/GPU bound): call it from a worker thread in async code.
-        ``language_hint`` forces the language ("en"/"hi"); leave it unset so
-        Whisper detects the language of each utterance.
-        """
+        """16 kHz mono int16 PCM to text. Blocking: call it from a worker thread.
+        ``language_hint`` ("en"/"hi") skips language detection."""
         if not audio_bytes:
             return self._empty(language_hint)
         self._load()
@@ -127,7 +102,6 @@ class FasterWhisperSTT:
         *,
         language_hint: str | None = None,
     ) -> TranscriptionResult:
-        """Transcribe an audio file (WAV/MP3/etc). Mainly for testing."""
         self._load()
         import soundfile as sf  # type: ignore[import-untyped]
 
@@ -135,8 +109,6 @@ class FasterWhisperSTT:
         if samples.ndim == 2:
             samples = samples.mean(axis=1)
         return self._transcribe_array(samples, language_hint=language_hint)
-
-    # ── internals ─────────────────────────────────────────────────────────────
 
     def _transcribe_array(
         self,
@@ -157,7 +129,7 @@ class FasterWhisperSTT:
 
         text = " ".join(s.text.strip() for s in segments if s.text.strip())
         avg_logprob = sum(s.avg_logprob for s in segments) / len(segments) if segments else -1.0
-        # Convert log-prob to rough [0, 1] confidence (−1 → ~0.37, 0 → 1.0)
+        # Rough confidence: the average log-probability (at most 0) shifted into [0, 1].
         confidence = float(min(1.0, max(0.0, 1.0 + avg_logprob)))
         duration = float(info.duration) if hasattr(info, "duration") else len(samples) / 16000.0
 

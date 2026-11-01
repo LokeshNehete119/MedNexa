@@ -15,21 +15,21 @@ class TelephonySettings(BaseSettings):
         extra="ignore",
     )
 
-    # ── Backend API ──────────────────────────────────────────────────────────
+    # Backend API
     backend_url: str = "http://localhost:8000"
-    """Base URL of the Part 1 FastAPI backend (no trailing slash)."""
+    """Backend URL, without a trailing slash."""
 
     backend_api_key: str = ""
     """Service key for the backend's /calls routes (the backend's MEDNEXA_SERVICE_API_KEY).
     Without it the backend rejects call-log requests with 401 once auth is enabled."""
 
     hospital_id: str = ""
-    """UUID of the hospital this pipeline serves. Set in .env."""
+    """The hospital whose calls this service answers."""
 
     use_stub_agent: bool = False
-    """Use the canned StubAgent even when Part 2's agent package is installed."""
+    """Answer with the canned StubAgent instead of the real agent."""
 
-    # ── Twilio ───────────────────────────────────────────────────────────────
+    # Twilio
     twilio_account_sid: str = ""
     twilio_auth_token: str = ""
     twilio_phone_number: str = ""
@@ -37,7 +37,7 @@ class TelephonySettings(BaseSettings):
     """Staff number (E.164) that calls are connected to when the agent hands over to a
     person. Empty = the caller is asked to call reception instead."""
 
-    # ── STT (Faster-Whisper) ─────────────────────────────────────────────────
+    # STT (Faster-Whisper)
     whisper_model_size: str = "large-v3"
     """Whisper model: tiny / base / small / medium / large-v3."""
     whisper_device: str = "auto"
@@ -49,7 +49,7 @@ class TelephonySettings(BaseSettings):
     whisper_vad_filter: bool = True
     """Let Whisper apply its own internal VAD on top of Silero."""
 
-    # ── VAD (Silero) ─────────────────────────────────────────────────────────
+    # VAD (Silero)
     vad_threshold: float = 0.5
     """Confidence threshold for speech vs silence (0.0–1.0)."""
     vad_min_speech_ms: int = 250
@@ -59,7 +59,7 @@ class TelephonySettings(BaseSettings):
     when they pause mid-sentence, e.g. while giving their age)."""
     vad_sample_rate: int = 16000
 
-    # ── TTS ──────────────────────────────────────────────────────────────────
+    # TTS
     tts_engine: str = "piper"
     """Primary TTS: 'piper' (local) or 'edge' (cloud fallback)."""
     piper_binary: str = "piper"
@@ -67,15 +67,12 @@ class TelephonySettings(BaseSettings):
     piper_voice_en: str = "en_US-amy-medium"
     """Piper voice model for English (filename without .onnx)."""
     piper_voice_hi: str = "hi_IN-hemant-medium"
-    """Piper voice model for Hindi."""
     piper_models_dir: str = "models/piper"
     """Directory where .onnx voice model files are stored."""
     edge_voice_en: str = "en-IN-NeerjaNeural"
-    """Edge-TTS voice for English."""
     edge_voice_hi: str = "hi-IN-SwaraNeural"
-    """Edge-TTS voice for Hindi."""
 
-    # ── Call pipeline ────────────────────────────────────────────────────────
+    # Call pipeline
     call_timeout_seconds: int = 300
     """Maximum call duration (5 min default). Call ends automatically after this."""
     silence_timeout_seconds: int = 30
@@ -84,17 +81,16 @@ class TelephonySettings(BaseSettings):
     min_transcript_confidence: float = 0.3
     """Transcripts Whisper is less sure of than this (0-1) are treated as background
     noise and ignored, instead of being answered."""
-    """Stop TTS playback when caller starts speaking."""
     max_concurrent_calls: int = 10
 
-    # ── Logging ──────────────────────────────────────────────────────────────
+    # Logging
     log_level: str = "INFO"
     recordings_dir: str = "recordings"
     """Directory to store call recordings (created if absent)."""
     enable_recordings: bool = False
     """Record calls (requires caller consent prompt)."""
 
-    # ── HTTP server (Twilio webhook receiver) ────────────────────────────────
+    # HTTP server (Twilio webhook receiver)
     server_host: str = "0.0.0.0"
     server_port: int = 8001
     public_url: str = ""

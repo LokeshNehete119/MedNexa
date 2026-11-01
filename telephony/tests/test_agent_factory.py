@@ -1,4 +1,4 @@
-"""create_agent: Part 2's MedNexaAgent when installed, otherwise the stub."""
+"""create_agent: the real MedNexaAgent when installed, otherwise the stub."""
 
 from __future__ import annotations
 

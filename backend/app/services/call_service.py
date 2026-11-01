@@ -1,4 +1,4 @@
-"""Call session and transcript storage (written by Part 3's call pipeline)."""
+"""Call session and transcript storage (written by the call pipeline)."""
 
 import uuid
 from datetime import UTC, datetime, timedelta

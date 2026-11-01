@@ -1,4 +1,4 @@
-"""Agent evaluation harness (task 2.13): scripted caller conversations run against
+"""Agent evaluation harness: scripted caller conversations run against
 the configured *real* LLM and a seeded database, checked on what the agent did.
 
     cd backend && uv run python -m scripts.seed --reset    # fresh sample data
@@ -173,7 +173,7 @@ def print_report(results: Sequence[Result]) -> None:
             suffix = f"   [{t.provider}, {t.latency_ms} ms]" if t.caller else ""
             print(f"  agent:  {t.agent}{suffix}")
         for failure in r.failures:
-            print(f"  ✗ {failure}")
+            print(f"  FAIL {failure}")
     passed = sum(r.passed for r in results)
     latencies = [t.latency_ms for r in results for t in r.turns if t.caller]
     avg = sum(latencies) // len(latencies) if latencies else 0

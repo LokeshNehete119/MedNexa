@@ -41,7 +41,7 @@ def _staff_from(credentials: HTTPAuthorizationCredentials | None) -> dict[str, A
 
 
 async def require_staff(credentials: BearerCredentials = None) -> dict[str, Any]:
-    """Authentication for every protected /api/v1 route (Part 5 - Task 5.3).
+    """Authentication for every protected /api/v1 route.
 
     Requires a valid staff JWT (Authorization: Bearer ...) and returns its payload,
     or raises 401.

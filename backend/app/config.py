@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     # Prefixed to 10-digit local numbers when normalizing phones (91 = India).
     default_country_code: str = "91"
 
-    # Authentication (Part 5 - Task 5.3). There are no defaults for secrets or
+    # Authentication. There are no defaults for secrets or
     # credentials on purpose: the server refuses to start until they are set
     # (see require_auth_config), so nobody ever runs with a published key.
     auth_enabled: bool = True  # False only for local development without login
@@ -31,7 +31,7 @@ class Settings(BaseSettings):
     admin_name: str = "Hospital Staff"
     # Plain, or a PBKDF2 hash made with `python -m app.core.security`.
     admin_password: str = ""
-    # Lets the telephony service (Part 3) write call logs without a staff login. It is
+    # Lets the telephony service write call logs without a staff login. It is
     # accepted on the /calls routes only. Empty = disabled.
     service_api_key: str = ""
 

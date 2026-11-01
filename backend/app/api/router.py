@@ -18,5 +18,5 @@ protected.include_router(appointments.router)
 
 api_router.include_router(protected)
 
-# The call pipeline (Part 3) writes call logs with its service key as well as staff tokens.
+# The call pipeline writes call logs with its service key as well as staff tokens.
 api_router.include_router(calls.router, dependencies=[Depends(require_staff_or_service)])
