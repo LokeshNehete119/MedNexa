@@ -17,6 +17,8 @@ export async function listAppointments(params: {
   date_from?: string;
   date_to?: string;
   status?: AppointmentStatus;
+  /** Patient name, phone digits or token number. */
+  q?: string;
   limit?: number;
   offset?: number;
 } = {}): Promise<Page<AppointmentOut>> {

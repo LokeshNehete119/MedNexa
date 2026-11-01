@@ -153,6 +153,11 @@ The agent reads the database directly, so the telephony process also needs
 When the call ends, the session is closed with the agent's `call_outcome` and
 `escalated` flag (the stub reports `OTHER`).
 
+When the agent hands a call over to a person, the AI stops and, on Twilio calls, the
+call is connected to `MEDNEXA_TEL_TRANSFER_PHONE_NUMBER` once the caller has heard
+"please stay on the line". Without that number (or on the local WebSocket), the caller
+is asked to call reception directly.
+
 Any agent implementing the `AgentInterface` protocol can be passed explicitly:
 ```python
 async def get_greeting(self) -> str: ...

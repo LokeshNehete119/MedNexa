@@ -1,12 +1,13 @@
 """Service-level tests for the agent lookups and admin helpers not covered elsewhere."""
 
 import asyncio
-from datetime import time, timedelta
+from datetime import UTC, datetime, time, timedelta
 
 import pytest
+from sqlalchemy import func, select
 
 from app.core.exceptions import Conflict, DomainValidationError, NotFound
-from app.models import CallOutcome, CallRole, Doctor
+from app.models import CallLog, CallOutcome, CallRole, Doctor
 from app.schemas.call import CallLogCreate, CallSessionCreate, CallSessionEnd
 from app.schemas.hospital import HospitalInfoCreate
 from app.schemas.patient import PatientCreate
@@ -205,3 +206,26 @@ async def test_override_upsert_bumps_updated_at(db) -> None:
     )
     assert second.created_at == created_at
     assert second.updated_at > first_updated
+
+
+async def test_purge_deletes_only_calls_past_the_retention_period(db) -> None:
+    hospital = await make_hospital(db)
+    sessions = []
+    for age_days in (0, 89, 91, 400):
+        session = await call_service.start_call(
+            db, CallSessionCreate(hospital_id=hospital.id, caller_phone="9876543210")
+        )
+        await call_service.append_log(
+            db, session.id, CallLogCreate(role=CallRole.USER, content="Hello")
+        )
+        session.call_start = datetime.now(UTC) - timedelta(days=age_days)
+        sessions.append(session.id)
+    await db.commit()
+
+    assert await call_service.purge_calls_older_than(db, 90) == 2
+    remaining, _ = await call_service.list_calls(db, hospital_id=hospital.id)
+    assert {c.id for c in remaining} == set(sessions[:2])
+    assert await db.scalar(select(func.count()).select_from(CallLog)) == 2  # logs cascade
+
+    with pytest.raises(ValueError):
+        await call_service.purge_calls_older_than(db, 0)

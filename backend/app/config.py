@@ -35,6 +35,10 @@ class Settings(BaseSettings):
     # accepted on the /calls routes only. Empty = disabled.
     service_api_key: str = ""
 
+    # Call sessions and their transcripts are deleted this many days after the call
+    # (patient data is kept no longer than needed). 0 keeps them forever.
+    call_log_retention_days: int = 90
+
     def require_auth_config(self) -> None:
         """Raise RuntimeError, listing every problem, if auth is enabled but unusable."""
         if not self.auth_enabled:

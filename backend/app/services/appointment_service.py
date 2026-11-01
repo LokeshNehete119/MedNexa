@@ -10,6 +10,7 @@ Functions taking `caller_phone` are for the AI agent and enforce ownership;
 the `*_by_staff` variants are for the admin dashboard.
 """
 
+import re
 import uuid
 from datetime import UTC, date, datetime, time
 
@@ -30,7 +31,7 @@ from app.core.exceptions import (
     NotOwner,
     SlotUnavailable,
 )
-from app.core.normalize import normalize_phone
+from app.core.normalize import normalize_name, normalize_phone
 from app.core.timeutils import hospital_now
 from app.models import Appointment, AppointmentStatus, BookingSource, Doctor, Hospital, Patient
 from app.schemas.appointment import AppointmentOut, BookingConfirmation, BookingRequest
@@ -395,9 +396,11 @@ async def list_appointments(
     date_from: date | None = None,
     date_to: date | None = None,
     status: AppointmentStatus | None = None,
+    q: str | None = None,
     limit: int = 50,
     offset: int = 0,
 ) -> tuple[list[AppointmentOut], int]:
+    """`q` matches the patient's name, part of their phone number, or a token number."""
     stmt = select(Appointment).options(
         selectinload(Appointment.patient), selectinload(Appointment.doctor)
     )
@@ -415,6 +418,14 @@ async def list_appointments(
         stmt = stmt.where(Appointment.appointment_date <= date_to)
     if status:
         stmt = stmt.where(Appointment.status == status)
+    if q and q.strip():
+        matches = [Patient.normalized_name.contains(normalize_name(q), autoescape=True)]
+        digits = re.sub(r"\D", "", q)
+        if len(digits) >= 3:
+            matches.append(Patient.phone.contains(digits, autoescape=True))
+        if q.strip().isdigit():
+            matches.append(Appointment.token_number == int(q))
+        stmt = stmt.join(Appointment.patient).where(or_(*matches))
     stmt = stmt.order_by(
         Appointment.appointment_date, Appointment.appointment_time, Appointment.token_number
     )

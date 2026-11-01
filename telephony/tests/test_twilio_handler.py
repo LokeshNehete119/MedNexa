@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import re
@@ -153,3 +154,34 @@ def test_token_is_bound_to_its_call(
         with pytest.raises(WebSocketDisconnect):
             ws.receive_text()
     fake_pipeline.assert_not_called()
+
+
+# ── transfer to staff ─────────────────────────────────────────────────────────
+
+
+def test_transfer_redirects_the_call_to_the_staff_number(monkeypatch: pytest.MonkeyPatch) -> None:
+    settings = cfg_module.get_settings()
+    monkeypatch.setattr(settings, "twilio_account_sid", "AC1")
+    monkeypatch.setattr(settings, "twilio_auth_token", AUTH_TOKEN)
+    monkeypatch.setattr(settings, "transfer_phone_number", "+917612000000")
+    client = MagicMock()
+    monkeypatch.setattr(twilio_handler, "Client", MagicMock(return_value=client))
+
+    assert asyncio.run(twilio_handler.transfer_to_staff("CA123"))
+    client.calls.assert_called_once_with("CA123")
+    twiml = client.calls.return_value.update.call_args.kwargs["twiml"]
+    assert twiml == "<Response><Dial>+917612000000</Dial></Response>"
+
+
+@pytest.mark.parametrize("failure", ["no_number", "twilio_error"])
+def test_transfer_reports_failure(monkeypatch: pytest.MonkeyPatch, failure: str) -> None:
+    settings = cfg_module.get_settings()
+    monkeypatch.setattr(settings, "twilio_account_sid", "AC1")
+    monkeypatch.setattr(settings, "twilio_auth_token", AUTH_TOKEN)
+    number = "" if failure == "no_number" else "+917612000000"
+    monkeypatch.setattr(settings, "transfer_phone_number", number)
+    client = MagicMock()
+    client.calls.return_value.update.side_effect = RuntimeError("call already ended")
+    monkeypatch.setattr(twilio_handler, "Client", MagicMock(return_value=client))
+
+    assert asyncio.run(twilio_handler.transfer_to_staff("CA123")) is False
