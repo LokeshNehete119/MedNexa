@@ -97,7 +97,10 @@ All settings use the `MEDNEXA_AGENT_` prefix (see `.env.example`):
 |---|---|---|
 | `LLM_MODE` | `auto` | `auto`, `local` (never cloud) or `cloud` (never local) |
 | `LOCAL_MODEL` / `OLLAMA_URL` | `llama3.1:8b` / `http://localhost:11434` | Ollama model |
-| `CLOUD_PROVIDER` / `CLOUD_MODEL` | `groq` / `llama-3.3-70b-versatile` | Cloud model; only used when `GROQ_API_KEY` or `OPENAI_API_KEY` is set. Check the provider's current model list |
+| `LOCAL_CONTEXT_TOKENS` / `LOCAL_KEEP_ALIVE` | `8192` / `1h` | Context window for Ollama (its 4096 default cuts off long calls); how long the model stays loaded |
+| `CLOUD_PROVIDER` / `CLOUD_MODEL` | `groq` / `openai/gpt-oss-20b` | Cloud model; only used when `GROQ_API_KEY` or `OPENAI_API_KEY` is set. Check the provider's current model list |
+| `CLOUD_FALLBACK_MODELS` | `[]` | Groq models that answer when the main one is rate limited (each has its own per-minute limit) |
+| `CLOUD_REASONING_EFFORT` | unset | `low` makes gpt-oss models think briefly: faster replies, fewer tokens |
 | `MAX_LATENCY_SECONDS` | `3` | Local calls slower than this fall back to cloud |
 | `HINDI_PREFERS_CLOUD` | `true` | Send Hindi turns to the cloud model when available |
 | `CIRCUIT_FAILURE_THRESHOLD` / `CIRCUIT_OPEN_SECONDS` | `3` / `300` | Skip local after repeated failures |

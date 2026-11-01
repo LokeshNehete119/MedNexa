@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -122,233 +123,206 @@ def create_app() -> FastAPI:
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport"
-          content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>MedNexa Phone Agent</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MedNexa phone</title>
     <style>
+        :root {
+            --bg: #f6f7f5; --card: #ffffff; --ink: #1d2320; --muted: #5d6762; --line: #dde1dd;
+            --green: #1e6b5c; --amber: #9a6700; --blue: #2457a6; --red: #b42318;
+        }
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --bg: #121513; --card: #1a1e1b; --ink: #eceeec; --muted: #9aa39e; --line: #2c322e;
+                --green: #5fb39f; --amber: #d6a53a; --blue: #7aa5ee; --red: #f0877c;
+            }
+        }
         * { box-sizing: border-box; }
         body {
+            margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 16px;
+            background: var(--bg); color: var(--ink);
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-            background: #0f172a;
-            color: #f8fafc;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            min-height: 100vh;
-            margin: 0;
-            padding: 16px;
         }
-        .card {
-            background: #1e293b;
-            border: 1px solid #334155;
-            border-radius: 24px;
-            padding: 32px 24px;
-            width: 100%;
-            max-width: 400px;
-            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7);
-            text-align: center;
+        main {
+            width: 100%; max-width: 380px; background: var(--card); border: 1px solid var(--line);
+            border-radius: 12px; padding: 28px 24px; text-align: center;
         }
-        .avatar {
-            width: 80px;
-            height: 80px;
-            background: #0284c7;
-            border-radius: 50%;
-            margin: 0 auto 16px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 36px;
-            box-shadow: 0 0 20px rgba(56, 189, 248, 0.4);
+        h1 { margin: 0 0 4px; font-size: 20px; }
+        .sub { margin: 0 0 24px; color: var(--muted); font-size: 14px; }
+        .hidden { display: none !important; }
+        .start {
+            font: inherit; font-size: 17px; font-weight: 600; padding: 14px 32px; border-radius: 8px;
+            cursor: pointer; border: 0; background: var(--green); color: #fff;
         }
-        h1 { margin: 0 0 4px; font-size: 22px; color: #f8fafc; }
-        .sub { color: #94a3b8; font-size: 14px; margin-bottom: 24px; }
-        .status-pill {
-            display: inline-block;
-            padding: 6px 16px;
-            border-radius: 9999px;
-            font-size: 13px;
-            font-weight: 600;
-            margin-bottom: 24px;
-            background: #334155;
-            color: #94a3b8;
+        .state {
+            margin: 4px 0 18px; padding: 18px 12px; border-radius: 8px; border: 2px solid var(--line);
+            transition: border-color .15s;
         }
-        .status-pill.connected { background: #065f46; color: #34d399; }
-        .btn-call {
-            background: #10b981;
-            color: white;
-            border: none;
-            width: 72px;
-            height: 72px;
-            border-radius: 50%;
-            font-size: 28px;
-            cursor: pointer;
-            margin: 0 auto 16px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            box-shadow: 0 10px 15px -3px rgba(16, 185, 129, 0.4);
-            transition: all 0.2s;
+        .state b { display: block; font-size: 20px; }
+        .state span { font-size: 14px; color: var(--muted); }
+        .state[data-s="listening"] { border-color: var(--green); }
+        .state[data-s="listening"] b { color: var(--green); }
+        .state[data-s="hearing"] { border-color: var(--green); background: color-mix(in srgb, var(--green) 10%, transparent); }
+        .state[data-s="hearing"] b { color: var(--green); }
+        .state[data-s="thinking"] { border-color: var(--blue); }
+        .state[data-s="thinking"] b { color: var(--blue); }
+        .state[data-s="speaking"] { border-color: var(--amber); }
+        .state[data-s="speaking"] b { color: var(--amber); }
+        .meter { height: 8px; border-radius: 4px; background: var(--line); overflow: hidden; margin: 0 0 6px; }
+        .meter i { display: block; height: 100%; width: 0; background: var(--green); transition: width 60ms linear; }
+        .meter-label { font-size: 12px; color: var(--muted); margin-bottom: 20px; }
+        .end {
+            font: inherit; font-size: 16px; font-weight: 600; padding: 12px 28px; border-radius: 8px;
+            cursor: pointer; border: 0; background: var(--red); color: #fff;
         }
-        .btn-call.hangup {
-            background: #ef4444;
-            box-shadow: 0 10px 15px -3px rgba(239, 68, 68, 0.4);
-        }
-        .btn-label { font-size: 14px; font-weight: 600; color: #cbd5e1; margin-bottom: 20px; }
-        .instructions {
-            background: #0f172a;
-            border-radius: 12px;
-            padding: 14px;
-            text-align: left;
-            font-size: 13px;
-            color: #94a3b8;
-            line-height: 1.5;
-        }
+        .note { margin: 18px 0 0; font-size: 13px; color: var(--muted); line-height: 1.5; }
+        .error { color: var(--red); font-size: 14px; margin-top: 14px; }
     </style>
 </head>
 <body>
-<div class="card">
-    <div class="avatar">🏥</div>
+<main>
     <h1>MedNexa Hospital</h1>
-    <div class="sub">AI Receptionist Voice Call</div>
+    <p class="sub" id="sub">AI receptionist</p>
 
-    <div id="statusPill" class="status-pill">Ready to Call</div>
+    <section id="pick">
+        <button class="start" onclick="startCall()">Start call</button>
+    </section>
 
-    <button id="callBtn" class="btn-call" onclick="toggleCall()">📞</button>
-    <div id="btnLabel" class="btn-label">Tap to Call</div>
+    <section id="live" class="hidden">
+        <div class="state" id="state" data-s="speaking" aria-live="polite">
+            <b id="stateTitle">Connecting…</b><span id="stateHint"></span>
+        </div>
+        <div class="meter"><i id="level"></i></div>
+        <div class="meter-label" id="meterLabel">Microphone</div>
+        <button class="end" onclick="stopCall()">End call</button>
+    </section>
 
-    <div class="instructions" id="instBox">
-        💡 <b>Instructions:</b><br>
-        1. Tap green button to start.<br>
-        2. Allow microphone permission.<br>
-        3. Talk directly into your phone (English or Hindi).
-    </div>
-</div>
+    <p class="note" id="note">Use headphones if you can: it stops the receptionist hearing itself.</p>
+    <p class="error hidden" id="err"></p>
+</main>
 
 <script>
-    let ws = null;
-    let audioContext = null;
-    let micStream = null;
-    let scriptProcessor = null;
-    let isCalling = false;
-    let nextPlayTime = 0;
+    const TEXT = {
+        connecting: ["Connecting…", ""],
+        speaking: ["Receptionist is speaking", "Please wait, your microphone is off"],
+        listening: ["Your turn: speak now", "The receptionist is listening"],
+        hearing: ["Hearing you…", "Keep going, pause when you are done"],
+        thinking: ["Thinking…", "Please wait for the reply"],
+    };
+    const SPEECH_LEVEL = 0.02;     // mic level (0-1) that counts as the caller speaking
+    const ECHO_TAIL = 0.7;         // seconds the mic stays off after the receptionist stops
 
-    const callBtn = document.getElementById('callBtn');
-    const statusPill = document.getElementById('statusPill');
-    const btnLabel = document.getElementById('btnLabel');
-    const instBox = document.getElementById('instBox');
+    let ws, audioContext, micStream, processor;
+    let isCalling = false, nextPlayTime = 0, serverThinking = false, shown = "";
 
-    async function toggleCall() {
-        if (!isCalling) {
-            await startCall();
-        } else {
-            stopCall();
-        }
+    const $ = (id) => document.getElementById(id);
+
+    function show(state) {
+        if (state === shown) return;
+        shown = state;
+        const [title, hint] = TEXT[state];
+        $("state").dataset.s = state;
+        $("stateTitle").textContent = title;
+        $("stateHint").textContent = hint;
     }
 
     async function startCall() {
+        $("err").classList.add("hidden");
+        $("pick").classList.add("hidden");
+        $("live").classList.remove("hidden");
+        $("sub").textContent = "Call in progress";
+        show("connecting");
         try {
-            statusPill.textContent = "Connecting...";
             micStream = await navigator.mediaDevices.getUserMedia({
-                audio: {
-                    channelCount: 1,
-                    echoCancellation: true,
-                    noiseSuppression: true,
-                    autoGainControl: true
-                }
+                audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
             });
-
-            const AudioCtx = window.AudioContext || window.webkitAudioContext;
-            audioContext = new AudioCtx({ sampleRate: 16000 });
+            audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
             nextPlayTime = audioContext.currentTime;
-
-            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-            const wsUrl = `${protocol}//${window.location.host}/ws/call?phone=+919876543210`;
-
-            ws = new WebSocket(wsUrl);
+            const protocol = location.protocol === "https:" ? "wss:" : "ws:";
+            ws = new WebSocket(`${protocol}//${location.host}/ws/call?phone=%2B919876543210&lang=en`);
             ws.binaryType = "arraybuffer";
-
-            ws.onopen = () => {
-                isCalling = true;
-                statusPill.className = "status-pill connected";
-                statusPill.textContent = "🟢 Connected (Speak now)";
-                callBtn.className = "btn-call hangup";
-                btnLabel.textContent = "Tap to End Call";
-                instBox.innerHTML =
-                    "🎙️ <b>Call in progress:</b><br>Speak now! Receptionist is listening.";
-                setupMic();
+            ws.onopen = () => { isCalling = true; show("speaking"); setupMic(); };
+            ws.onmessage = (e) => {
+                if (e.data instanceof ArrayBuffer) playPcm(e.data);
+                else serverThinking = JSON.parse(e.data).state === "thinking";
             };
-
-            ws.onmessage = (event) => {
-                if (event.data instanceof ArrayBuffer) {
-                    playPcm(event.data);
-                }
-            };
-
-            ws.onclose = () => stopCall();
-            ws.onerror = () => stopCall();
-
+            ws.onclose = ws.onerror = () => isCalling && stopCall();
         } catch (err) {
-            alert("Microphone error: " + err.message);
-            stopCall();
+            fail("Microphone error: " + err.message);
         }
     }
 
     function setupMic() {
         const source = audioContext.createMediaStreamSource(micStream);
-        scriptProcessor = audioContext.createScriptProcessor(512, 1, 1);
-
-        scriptProcessor.onaudioprocess = (e) => {
+        processor = audioContext.createScriptProcessor(512, 1, 1);
+        processor.onaudioprocess = (e) => {
             if (!isCalling || !ws || ws.readyState !== WebSocket.OPEN) return;
             const input = e.inputBuffer.getChannelData(0);
+            const now = audioContext.currentTime;
+            const playing = nextPlayTime > now;
+            // Half duplex: while the receptionist works out or speaks its reply (and for a
+            // moment after), send silence instead of the microphone, so neither background
+            // noise nor its own voice is taken for the caller.
+            const muted = serverThinking || playing || now < nextPlayTime + ECHO_TAIL;
+
+            let sum = 0;
+            for (let i = 0; i < input.length; i++) sum += input[i] * input[i];
+            const level = muted ? 0 : Math.sqrt(sum / input.length);
+            $("level").style.width = Math.min(100, level * 600) + "%";
+
+            if (serverThinking && !playing) show("thinking");
+            else if (muted) show("speaking");
+            else show(level > SPEECH_LEVEL ? "hearing" : "listening");
+
             const pcm16 = new Int16Array(input.length);
-            for (let i = 0; i < input.length; i++) {
-                let s = Math.max(-1, Math.min(1, input[i]));
-                pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+            if (!muted) {
+                for (let i = 0; i < input.length; i++) {
+                    const s = Math.max(-1, Math.min(1, input[i]));
+                    pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+                }
             }
             ws.send(pcm16.buffer);
         };
-
-        source.connect(scriptProcessor);
-        scriptProcessor.connect(audioContext.destination);
+        source.connect(processor);
+        processor.connect(audioContext.destination);
     }
 
     function playPcm(buffer) {
         if (!audioContext) return;
         const int16 = new Int16Array(buffer);
         const float32 = new Float32Array(int16.length);
-        for (let i = 0; i < int16.length; i++) {
-            float32[i] = int16[i] / 32768.0;
-        }
-
+        for (let i = 0; i < int16.length; i++) float32[i] = int16[i] / 32768;
         const audioBuffer = audioContext.createBuffer(1, float32.length, 16000);
         audioBuffer.getChannelData(0).set(float32);
-
         const source = audioContext.createBufferSource();
         source.buffer = audioBuffer;
         source.connect(audioContext.destination);
-
         const now = audioContext.currentTime;
         if (nextPlayTime < now) nextPlayTime = now;
         source.start(nextPlayTime);
         nextPlayTime += audioBuffer.duration;
     }
 
+    function fail(message) {
+        stopCall();
+        $("err").textContent = message;
+        $("err").classList.remove("hidden");
+    }
+
     function stopCall() {
         isCalling = false;
-        statusPill.className = "status-pill";
-        statusPill.textContent = "Call Ended";
-        callBtn.className = "btn-call";
-        btnLabel.textContent = "Tap to Call";
-        instBox.innerHTML = "💡 <b>Call ended.</b> Tap the green button to call again.";
-
-        if (scriptProcessor) { scriptProcessor.disconnect(); scriptProcessor = null; }
-        if (micStream) { micStream.getTracks().forEach(t => t.stop()); micStream = null; }
-        if (ws) { ws.close(); ws = null; }
+        serverThinking = false;
+        if (processor) { processor.disconnect(); processor = null; }
+        if (micStream) { micStream.getTracks().forEach((t) => t.stop()); micStream = null; }
+        if (ws) { const s = ws; ws = null; s.close(); }
         if (audioContext) { audioContext.close(); audioContext = null; }
+        shown = "";
+        $("live").classList.add("hidden");
+        $("pick").classList.remove("hidden");
+        $("sub").textContent = "AI receptionist";
     }
 </script>
 </body>
-</html>"""
+</html>"""  # noqa: E501
         return HTMLResponse(content=html)
 
     # ── Local WebSocket test bridge ───────────────────────────────────────────
@@ -361,6 +335,7 @@ def create_app() -> FastAPI:
         Protocol:
           Client → Server: raw int16 LE PCM bytes (16 kHz mono)
           Server → Client: raw int16 LE PCM bytes (TTS responses)
+          Server → Client: text {"state": "thinking" | "listening"} as the turn changes
           Session lifecycle: auto-start on connect, auto-end on disconnect.
         """
         from telephony.pipeline import CallPipeline
@@ -369,6 +344,9 @@ def create_app() -> FastAPI:
         cfg = get_settings()
         # Without ?phone=..., the call is logged as from a withheld number.
         caller_phone = websocket.query_params.get("phone", "anonymous")
+        # The caller picks English or Hindi on the page; anything else means "detect it".
+        language = websocket.query_params.get("lang")
+        language = language if language in ("en", "hi") else None
 
         async with BackendClient() as client:
             session_id = await client.start_call(cfg.hospital_id, caller_phone)
@@ -383,6 +361,8 @@ def create_app() -> FastAPI:
                     chunk = await websocket.receive_bytes()
                     if not chunk:
                         break
+                    if not pipeline.listening:
+                        continue  # noise while the reply is worked out
                     try:
                         audio_queue.put_nowait(chunk)
                     except asyncio.QueueFull:
@@ -408,8 +388,13 @@ def create_app() -> FastAPI:
             with contextlib.suppress(Exception):  # client may have disconnected
                 await websocket.send_bytes(pcm)
 
+        async def send_state(state: str) -> None:
+            await websocket.send_text(json.dumps({"state": state}))
+
+        pipeline = CallPipeline(
+            session_id, caller_phone, send_audio, language=language, on_state=send_state
+        )
         recv_task = asyncio.create_task(receive_loop())
-        pipeline = CallPipeline(session_id, caller_phone, send_audio)
         pipe_task = asyncio.create_task(pipeline.run(audio_gen()))
 
         done, pending = await asyncio.wait(

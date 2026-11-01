@@ -54,8 +54,9 @@ class TelephonySettings(BaseSettings):
     """Confidence threshold for speech vs silence (0.0–1.0)."""
     vad_min_speech_ms: int = 250
     """Minimum speech segment length in ms (shorter are discarded)."""
-    vad_min_silence_ms: int = 600
-    """Silence after speech that triggers end-of-utterance."""
+    vad_min_silence_ms: int = 1000
+    """Silence after speech that triggers end-of-utterance (shorter cuts callers off
+    when they pause mid-sentence, e.g. while giving their age)."""
     vad_sample_rate: int = 16000
 
     # ── TTS ──────────────────────────────────────────────────────────────────
@@ -80,6 +81,9 @@ class TelephonySettings(BaseSettings):
     silence_timeout_seconds: int = 30
     """Hang up if the caller is silent for this many seconds."""
     barge_in_enabled: bool = True
+    min_transcript_confidence: float = 0.3
+    """Transcripts Whisper is less sure of than this (0-1) are treated as background
+    noise and ignored, instead of being answered."""
     """Stop TTS playback when caller starts speaking."""
     max_concurrent_calls: int = 10
 

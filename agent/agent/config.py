@@ -24,10 +24,19 @@ class AgentSettings(BaseSettings):
     # Local model (Ollama)
     ollama_url: str = "http://localhost:11434"
     local_model: str = "llama3.1:8b"
+    # Ollama's default context (4096 tokens) is smaller than the prompt plus a call's
+    # history, and Ollama silently drops the start of what doesn't fit.
+    local_context_tokens: int = 8192
+    local_keep_alive: str = "1h"  # keep the model loaded between calls
 
     # Cloud model
     cloud_provider: CloudProvider = CloudProvider.GROQ
-    cloud_model: str = "llama-3.3-70b-versatile"
+    cloud_model: str = "openai/gpt-oss-20b"
+    # Groq limits tokens per minute for each model separately: when the main model is
+    # rate limited, the next one here answers instead of waiting for the limit to reset.
+    cloud_fallback_models: list[str] = []
+    # "low" makes reasoning models (gpt-oss) think briefly: faster, fewer tokens.
+    cloud_reasoning_effort: str | None = None
     groq_api_key: SecretStr | None = None
     openai_api_key: SecretStr | None = None
 
@@ -41,7 +50,7 @@ class AgentSettings(BaseSettings):
     # Agent loop
     temperature: float = 0.2
     max_tool_rounds: int = 4  # LLM <-> tool round trips per caller turn
-    max_history_messages: int = 10  # older turns are dropped from the LLM context
+    max_history_messages: int = 40  # older turns are dropped from the LLM context
     max_response_chars: int = 350  # replies are spoken; keep them very short
 
 

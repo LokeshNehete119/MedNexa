@@ -27,6 +27,7 @@ caller's audio stream (Twilio / Asterisk bridge provides this).
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import re
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
@@ -46,12 +47,19 @@ log = get_logger("pipeline")
 SendAudioFn = Callable[[bytes], Awaitable[None]]
 ClearAudioFn = Callable[[], Awaitable[None]]
 TransferFn = Callable[[], Awaitable[bool]]
+StateFn = Callable[[str], Awaitable[None]]
 
 # Pipeline audio: 16 kHz mono int16 -> 32000 bytes per second of playback.
 PCM_BYTES_PER_SECOND = 16000 * 2
 
 # Closing phrases (Part 2's agent says these only in its final reply).
 _FAREWELL = re.compile(r"\bgood\s?-?bye\b|\bbye\b|अलविदा|धन्यवाद[\s,।!]*नमस्ते", re.IGNORECASE)
+
+# What Whisper writes for breathing, clicks or background noise: never a caller's words.
+_NOISE_TRANSCRIPT = re.compile(
+    r"^[\W_]*(you|uh+|um+|hmm+|mm+|ah+|thanks for watching!?|subtitles by .*)?[\W_]*$",
+    re.IGNORECASE,
+)
 
 # Said when the agent hands over to staff but the call can't be transferred.
 _NO_TRANSFER = {
@@ -83,6 +91,13 @@ class CallPipeline:
         the agent escalates; returns False if it could not.
     agent:
         MedNexaAgent or StubAgent instance.
+    on_state:
+        Optional async function told "thinking" when the caller's turn ends and
+        "listening" once the reply has been sent, so a client can show it.
+    language:
+        "en" or "hi" when the caller chose a language up front: speech is then
+        recognised in that language and the greeting is spoken in it. Left unset,
+        the language is detected afresh from every utterance.
     """
 
     def __init__(
@@ -94,6 +109,8 @@ class CallPipeline:
         clear_audio: ClearAudioFn | None = None,
         transfer: TransferFn | None = None,
         agent: AgentInterface | None = None,
+        language: str | None = None,
+        on_state: StateFn | None = None,
     ) -> None:
         cfg = get_settings()
         self.session_id = session_id
@@ -101,6 +118,7 @@ class CallPipeline:
         self._send_audio = send_audio
         self._clear_audio = clear_audio
         self._transfer = transfer
+        self._on_state = on_state
         self._cfg = cfg
 
         # Core components
@@ -113,13 +131,17 @@ class CallPipeline:
         self._recorder = CallRecorder(session_id)
 
         # State
-        self._language: str = "en"
+        self._language: str = language or "en"
+        self._language_chosen = language is not None
+        if self._language_chosen and hasattr(self._agent, "fixed_language"):
+            self._agent.fixed_language = self._language  # greeting and replies stay in it
         self._utterance_buf: bytearray = bytearray()
         # Audio is sent faster than real time and buffered by the telephony side,
         # so "playing" lasts until the caller has actually heard it all.
         self._playback_until: float = 0.0
         self._barge_in_triggered = asyncio.Event()
         self._call_active = True
+        self._busy = False  # between the end of the caller's turn and the reply
         self._start_time: float = 0.0
         self._last_speech_time: float = 0.0
 
@@ -207,9 +229,31 @@ class CallPipeline:
                 # (the size check is a safety valve against runaway memory)
                 await self._process_utterance()
 
+    @property
+    def listening(self) -> bool:
+        """False while a reply is being worked out: audio arriving then is background
+        noise to the caller's finished turn, and the call handlers drop it."""
+        return self._call_active and not self._busy
+
+    async def _set_state(self, state: str) -> None:
+        if self._on_state is not None:
+            with contextlib.suppress(Exception):  # the client may have gone
+                await self._on_state(state)
+
     # ── utterance handling ────────────────────────────────────────────────────
 
     async def _process_utterance(self) -> None:
+        if not self._utterance_buf:
+            return
+        self._busy = True
+        await self._set_state("thinking")
+        try:
+            await self._respond()
+        finally:
+            self._busy = False
+            await self._set_state("listening")
+
+    async def _respond(self) -> None:
         """Transcribe the buffered utterance, call the agent, speak the response."""
         if not self._utterance_buf:
             return
@@ -224,9 +268,21 @@ class CallPipeline:
         pcm = normalise_audio(pcm)
 
         # Whisper is blocking: run it off the event loop so other calls keep flowing.
-        # No language hint, so each utterance's language is detected afresh.
-        result = await asyncio.to_thread(self._stt.transcribe_bytes, pcm)
+        # Without a chosen language each utterance's language is detected afresh.
+        hint = self._language if self._language_chosen else None
+        result = await asyncio.to_thread(self._stt.transcribe_bytes, pcm, language_hint=hint)
         stt_ms = int((time.monotonic() - t0) * 1000)
+
+        text = result.text.strip()
+        if self._is_noise(text, result.confidence):
+            # Answering noise makes the receptionist talk over a quiet caller.
+            log.info(
+                "utterance_ignored",
+                session_id=self.session_id,
+                text=text[:40],
+                confidence=round(result.confidence, 2),
+            )
+            return
 
         # Update detected language
         if result.language != self._language:
@@ -238,7 +294,6 @@ class CallPipeline:
             )
             self._language = result.language
 
-        text = result.text.strip()
         log.info(
             "utterance_transcribed",
             session_id=self.session_id,
@@ -246,16 +301,6 @@ class CallPipeline:
             lang=self._language,
             stt_ms=stt_ms,
         )
-
-        if not text:
-            # Empty transcription — ask them to repeat
-            repeat_prompt = (
-                "I'm sorry, I didn't catch that. Could you please repeat?"
-                if self._language == "en"
-                else "माफ करें, मुझे समझ नहीं आया। कृपया दोबारा कहें।"
-            )
-            await self._speak(repeat_prompt)
-            return
 
         # Log the caller's turn
         await self._log("USER", text)
@@ -367,6 +412,11 @@ class CallPipeline:
         log.info("pipeline_done", session_id=self.session_id)
 
     # ── helpers ───────────────────────────────────────────────────────────────
+
+    def _is_noise(self, text: str, confidence: float) -> bool:
+        return (
+            bool(_NOISE_TRANSCRIPT.match(text)) or confidence < self._cfg.min_transcript_confidence
+        )
 
     @staticmethod
     def _is_farewell(text: str) -> bool:

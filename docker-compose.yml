@@ -157,10 +157,13 @@ services:
       MEDNEXA_TEL_WHISPER_MODEL_SIZE: ${MEDNEXA_TEL_WHISPER_MODEL_SIZE:-base}
       MEDNEXA_TEL_WHISPER_DEVICE: ${MEDNEXA_TEL_WHISPER_DEVICE:-cpu}
       MEDNEXA_AGENT_LLM_MODE: ${MEDNEXA_AGENT_LLM_MODE:-auto}
-      MEDNEXA_AGENT_OLLAMA_URL: http://ollama:11434
+      MEDNEXA_AGENT_OLLAMA_URL: ${MEDNEXA_AGENT_OLLAMA_URL:-http://ollama:11434}
       MEDNEXA_AGENT_LOCAL_MODEL: ${MEDNEXA_AGENT_LOCAL_MODEL:-llama3.1:8b}
+      MEDNEXA_AGENT_LOCAL_CONTEXT_TOKENS: ${MEDNEXA_AGENT_LOCAL_CONTEXT_TOKENS:-8192}
       MEDNEXA_AGENT_CLOUD_PROVIDER: ${MEDNEXA_AGENT_CLOUD_PROVIDER:-groq}
-      MEDNEXA_AGENT_CLOUD_MODEL: ${MEDNEXA_AGENT_CLOUD_MODEL:-llama-3.3-70b-versatile}
+      MEDNEXA_AGENT_CLOUD_MODEL: ${MEDNEXA_AGENT_CLOUD_MODEL:-openai/gpt-oss-20b}
+      MEDNEXA_AGENT_CLOUD_FALLBACK_MODELS: ${MEDNEXA_AGENT_CLOUD_FALLBACK_MODELS:-[]}
+      MEDNEXA_AGENT_CLOUD_REASONING_EFFORT: ${MEDNEXA_AGENT_CLOUD_REASONING_EFFORT:-}
       MEDNEXA_AGENT_GROQ_API_KEY: ${MEDNEXA_AGENT_GROQ_API_KEY:-}
       MEDNEXA_AGENT_OPENAI_API_KEY: ${MEDNEXA_AGENT_OPENAI_API_KEY:-}
     volumes:
@@ -176,6 +179,7 @@ services:
   # ── Local LLM (Ollama) ──────────────────────────────────────────────────────
   # Internal only: Ollama has no authentication. Pull a model once after the first start:
   #   docker compose exec ollama ollama pull llama3.1:8b
+  # On an NVIDIA GPU add docker-compose.gpu.yml, or Ollama runs on the CPU.
   # (Pin the image to a specific version for production.)
   ollama:
     image: ollama/ollama:latest

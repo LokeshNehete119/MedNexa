@@ -42,6 +42,27 @@ def make_agent(seed, session_factory, replies, *, phone: str = CALLER, **setting
     return agent, provider
 
 
+async def test_greeting_is_in_hindi_when_the_caller_chose_hindi(seed, session_factory) -> None:
+    agent, _ = make_agent(seed, session_factory, [])
+    agent.fixed_language = "hi"
+    greeting = await agent.get_greeting()
+    assert "Test City Hospital" in greeting
+    assert "नमस्ते" in greeting
+    assert "AI receptionist" not in greeting
+
+
+async def test_a_caller_who_chose_english_is_never_switched_to_hindi(seed, session_factory) -> None:
+    agent, provider = make_agent(seed, session_factory, [say("Sure.")])
+    agent.fixed_language = "en"
+    greeting = await agent.get_greeting()
+    assert "हिंदी" not in greeting
+    await agent.process("mujhe kal doctor se milna hai", "hi")
+    assert agent.language == "en"
+    system_prompt = provider.calls[0][0][0].content
+    assert "Reply in English" in system_prompt
+    assert "switch with them" not in system_prompt
+
+
 async def test_greeting_names_the_hospital(seed, session_factory) -> None:
     agent, _ = make_agent(seed, session_factory, [])
     greeting = await agent.get_greeting()
