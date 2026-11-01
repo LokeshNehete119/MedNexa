@@ -1,8 +1,13 @@
+from datetime import timedelta
+
 from tests.api.helpers import create_doctor, create_hospital
 from tests.factories import next_weekday
 
-MONDAY = next_weekday(1, weeks_ahead=2).isoformat()
-TUESDAY = next_weekday(2, weeks_ahead=2).isoformat()
+_MONDAY = next_weekday(1, weeks_ahead=2)
+MONDAY = _MONDAY.isoformat()
+# Derived from MONDAY so it is always the following day (computing it separately
+# put it before MONDAY when the tests ran on a Tuesday).
+TUESDAY = (_MONDAY + timedelta(days=1)).isoformat()
 
 
 async def _book(client, doctor_id: str, at: str, name: str = "Rahul Kumar", **kw):
@@ -117,6 +122,14 @@ async def test_appointment_listing_filters(client) -> None:
     assert (await query(date=TUESDAY)).json()["total"] == 1
     assert (await query(status="BOOKED")).json()["total"] == 2
     assert (await query(date_from=MONDAY, date_to=MONDAY)).json()["total"] == 2
+
+    # q: patient name, phone digits or token number, across all pages
+    assert (await query(q="sita")).json()["total"] == 1
+    assert (await query(q="KUMAR")).json()["total"] == 3
+    assert (await query(q="432-10")).json()["total"] == 3
+    assert (await query(q="2")).json()["total"] == 1  # Sita's token
+    assert (await query(q="nobody")).json()["total"] == 0
+    assert (await query(q="%")).json()["total"] == 0  # wildcards are matched literally
 
     page = (await query(limit=1, offset=1)).json()
     assert page["total"] == 3 and len(page["items"]) == 1

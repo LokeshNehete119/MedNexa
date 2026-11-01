@@ -1,9 +1,9 @@
 """Call session and transcript storage (written by Part 3's call pipeline)."""
 
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import DomainValidationError, NotFound
@@ -77,6 +77,17 @@ async def end_call(db: AsyncSession, session_id: uuid.UUID, data: CallSessionEnd
         raise
     await db.refresh(session)
     return session
+
+
+async def purge_calls_older_than(db: AsyncSession, days: int) -> int:
+    """Delete call sessions (and, by cascade, their logs) that started more than
+    `days` days ago. Returns how many sessions were deleted."""
+    if days < 1:
+        raise ValueError("days must be at least 1")
+    cutoff = datetime.now(UTC) - timedelta(days=days)
+    result = await db.execute(delete(CallSession).where(CallSession.call_start < cutoff))
+    await db.commit()
+    return result.rowcount or 0  # type: ignore[attr-defined]
 
 
 async def list_calls(
