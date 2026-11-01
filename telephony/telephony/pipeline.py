@@ -260,6 +260,11 @@ class CallPipeline:
         # Log the caller's turn
         await self._log("USER", text)
 
+        # Reset the silence timer while the agent is thinking so a slow LLM
+        # response (e.g. Groq rate-limit retry taking 20-45 s) doesn't fire
+        # the silence-timeout check on the very next audio chunk.
+        self._last_speech_time = time.monotonic()
+
         # Agent
         t1 = time.monotonic()
         response = await self._agent.process(text, self._language)
@@ -272,11 +277,19 @@ class CallPipeline:
             agent_ms=agent_ms,
         )
 
+        # Reset the silence timer again once we have a reply — TTS is about to
+        # play and the caller will be listening, not speaking.
+        self._last_speech_time = time.monotonic()
+
         # Log the agent's turn
         await self._log("ASSISTANT", response)
 
         # TTS
         await self._speak(response, language=self._language)
+
+        # After TTS finishes the caller needs time to respond; extend the
+        # silence window so we don't hang up immediately after a long reply.
+        self._last_speech_time = time.monotonic()
 
         if getattr(self._agent, "escalated", False):
             await self._hand_over()

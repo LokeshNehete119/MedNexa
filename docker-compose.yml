@@ -163,6 +163,9 @@ services:
       MEDNEXA_AGENT_CLOUD_MODEL: ${MEDNEXA_AGENT_CLOUD_MODEL:-llama-3.3-70b-versatile}
       MEDNEXA_AGENT_GROQ_API_KEY: ${MEDNEXA_AGENT_GROQ_API_KEY:-}
       MEDNEXA_AGENT_OPENAI_API_KEY: ${MEDNEXA_AGENT_OPENAI_API_KEY:-}
+    volumes:
+      - ./telephony/telephony/main.py:/app/telephony/main.py
+      - ./agent/agent/config.py:/workspace/agent/agent/config.py
     depends_on:
       api:
         condition: service_healthy

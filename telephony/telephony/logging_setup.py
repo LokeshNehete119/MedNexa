@@ -66,7 +66,9 @@ def configure_logging() -> None:
             structlog.processors.JSONRenderer(),
         ],
         wrapper_class=structlog.make_filtering_bound_logger(level),
-        logger_factory=structlog.PrintLoggerFactory(),
+        # Use stdlib LoggerFactory so that add_logger_name can read .name
+        # from the underlying logging.Logger (PrintLogger has no .name attr).
+        logger_factory=structlog.stdlib.LoggerFactory(),
         cache_logger_on_first_use=True,
     )
 
