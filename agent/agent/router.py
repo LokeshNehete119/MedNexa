@@ -206,6 +206,8 @@ def build_router(settings: AgentSettings) -> ModelRouter:
                 model=settings.local_model,
                 base_url=settings.ollama_url,
                 temperature=settings.temperature,
+                num_ctx=settings.local_context_tokens,
+                keep_alive=settings.local_keep_alive,
             ),
         )
 

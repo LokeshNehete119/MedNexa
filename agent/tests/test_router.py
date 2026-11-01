@@ -132,6 +132,7 @@ def test_build_router_wires_providers_from_settings() -> None:
 
     local_only = build_router(settings())
     assert local_only._local is not None and local_only._cloud is None  # no API key
+    assert local_only._local._model.num_ctx == 8192  # Ollama's 4096 default is too small
 
     groq = build_router(settings(groq_api_key="test-key"))
     assert groq._cloud is not None and groq._cloud.name == "groq:openai/gpt-oss-20b"

@@ -24,6 +24,10 @@ class AgentSettings(BaseSettings):
     # Local model (Ollama)
     ollama_url: str = "http://localhost:11434"
     local_model: str = "llama3.1:8b"
+    # Ollama's default context (4096 tokens) is smaller than the prompt plus a call's
+    # history, and Ollama silently drops the start of what doesn't fit.
+    local_context_tokens: int = 8192
+    local_keep_alive: str = "1h"  # keep the model loaded between calls
 
     # Cloud model
     cloud_provider: CloudProvider = CloudProvider.GROQ
