@@ -291,8 +291,9 @@ class CallPipeline:
         # silence window so we don't hang up immediately after a long reply.
         self._last_speech_time = time.monotonic()
 
-        # Detect "goodbye" intent to end the call cleanly
-        if self._is_farewell(response):
+        if getattr(self._agent, "escalated", False):
+            await self._hand_over()
+        elif self._is_farewell(response):  # the agent closed the call
             self._call_active = False
 
     async def _hand_over(self) -> None:
