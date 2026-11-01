@@ -2,7 +2,7 @@ import pytest
 from langchain_core.messages import HumanMessage
 
 from agent.config import AgentSettings, LLMMode
-from agent.router import ModelRouter, NoProviderAvailable
+from agent.router import ModelRouter, NoProviderAvailable, SpilloverProvider
 from tests.fakes import ScriptedProvider, say
 
 MESSAGES = [HumanMessage("hi")]
@@ -134,7 +134,12 @@ def test_build_router_wires_providers_from_settings() -> None:
     assert local_only._local is not None and local_only._cloud is None  # no API key
 
     groq = build_router(settings(groq_api_key="test-key"))
-    assert groq._cloud is not None and groq._cloud.name == "groq:llama-3.3-70b-versatile"
+    assert groq._cloud is not None and groq._cloud.name == "groq:openai/gpt-oss-20b"
+
+    spill = build_router(
+        settings(groq_api_key="test-key", cloud_fallback_models=["openai/gpt-oss-120b"])
+    )
+    assert isinstance(spill._cloud, SpilloverProvider)
 
     openai_only = build_router(
         settings(llm_mode="cloud", cloud_provider="openai", openai_api_key="k", cloud_model="m")
@@ -166,3 +171,24 @@ async def test_local_after_cloud_is_not_latency_capped() -> None:
     cloud = ScriptedProvider("cloud", [RuntimeError("cloud down")])
     router = ModelRouter(settings(max_latency_seconds=0.05), local, cloud)
     assert (await router.ainvoke(MESSAGES, language="hi")).content == "local answer"
+
+
+class RateLimited(Exception):
+    status_code = 429
+
+
+async def test_rate_limited_model_hands_over_to_the_next_one() -> None:
+    first = ScriptedProvider("groq:a", [RateLimited()])
+    second = ScriptedProvider("groq:b", [say("from b")])
+    router = ModelRouter(settings(llm_mode=LLMMode.CLOUD), None, SpilloverProvider([first, second]))
+    assert (await router.ainvoke(MESSAGES)).content == "from b"
+    assert router.stats.last_provider == "groq:b"
+
+
+async def test_other_errors_are_not_passed_to_the_next_model() -> None:
+    first = ScriptedProvider("groq:a", [ValueError("bad request")])
+    second = ScriptedProvider("groq:b", [say("from b")])
+    router = ModelRouter(settings(llm_mode=LLMMode.CLOUD), None, SpilloverProvider([first, second]))
+    with pytest.raises(NoProviderAvailable):
+        await router.ainvoke(MESSAGES)
+    assert second.calls == []

@@ -172,6 +172,133 @@ class TestPipelineUtterance:
         mock_stt.transcribe_bytes.assert_called()
 
 
+class TestChosenLanguage:
+    @pytest.mark.asyncio
+    async def test_chosen_language_is_used_for_speech_recognition(
+        self,
+        mock_vad: MagicMock,
+        mock_stt: MagicMock,
+        mock_tts: MagicMock,
+        mock_api: MagicMock,
+        mock_recorder: MagicMock,
+    ) -> None:
+        mock_vad.process_chunk.side_effect = [["speech_start"], ["speech_end"], ["silence"]]
+        agent = StubAgent()
+        agent.fixed_language = None  # type: ignore[attr-defined]  # the real agent has one
+
+        async def send(chunk: bytes) -> None:
+            pass
+
+        async def audio_stream() -> AsyncIterator[bytes]:
+            for c in (_make_speech_chunk(3), _make_speech_chunk(5), _make_silence_chunk(1)):
+                yield c
+
+        pipeline = CallPipeline("sess-hi", "+911234567890", send, agent=agent, language="hi")
+        await pipeline.run(audio_stream())
+
+        assert mock_stt.transcribe_bytes.call_args.kwargs["language_hint"] == "hi"
+        assert agent.fixed_language == "hi"  # type: ignore[attr-defined]
+
+    @pytest.mark.asyncio
+    async def test_without_a_choice_the_language_is_detected(
+        self,
+        mock_vad: MagicMock,
+        mock_stt: MagicMock,
+        mock_tts: MagicMock,
+        mock_api: MagicMock,
+        mock_recorder: MagicMock,
+    ) -> None:
+        mock_vad.process_chunk.side_effect = [["speech_start"], ["speech_end"], ["silence"]]
+
+        async def send(chunk: bytes) -> None:
+            pass
+
+        async def audio_stream() -> AsyncIterator[bytes]:
+            for c in (_make_speech_chunk(3), _make_speech_chunk(5), _make_silence_chunk(1)):
+                yield c
+
+        pipeline = CallPipeline("sess-auto", "+911234567890", send, agent=StubAgent())
+        await pipeline.run(audio_stream())
+
+        assert mock_stt.transcribe_bytes.call_args.kwargs["language_hint"] is None
+
+
+class TestBackgroundNoise:
+    @staticmethod
+    async def _one_utterance(pipeline: CallPipeline) -> None:
+        async def audio_stream() -> AsyncIterator[bytes]:
+            for c in (_make_speech_chunk(3), _make_speech_chunk(5), _make_silence_chunk(1)):
+                yield c
+
+        await pipeline.run(audio_stream())
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("text", "confidence"),
+        [("", 0.0), ("you", 0.9), ("Hmm...", 0.8), ("book a slot for monday", 0.1)],
+    )
+    async def test_noise_is_not_answered(
+        self,
+        text: str,
+        confidence: float,
+        mock_vad: MagicMock,
+        mock_stt: MagicMock,
+        mock_tts: MagicMock,
+        mock_api: MagicMock,
+        mock_recorder: MagicMock,
+    ) -> None:
+        from telephony.stt import TranscriptionResult
+
+        mock_stt.transcribe_bytes.return_value = TranscriptionResult(
+            text=text, language="en", confidence=confidence, duration_seconds=1.0
+        )
+        mock_vad.process_chunk.side_effect = [["speech_start"], ["speech_end"], ["silence"]]
+        agent = MagicMock(wraps=StubAgent())
+        agent.process = AsyncMock()
+
+        async def send(chunk: bytes) -> None:
+            pass
+
+        await self._one_utterance(CallPipeline("sess-n", "+911234567890", send, agent=agent))
+
+        agent.process.assert_not_called()
+        roles = [c.args[1] for c in mock_api.append_log.call_args_list]
+        assert "USER" not in roles
+
+    @pytest.mark.asyncio
+    async def test_audio_is_not_taken_while_the_reply_is_worked_out(
+        self,
+        mock_vad: MagicMock,
+        mock_stt: MagicMock,
+        mock_tts: MagicMock,
+        mock_api: MagicMock,
+        mock_recorder: MagicMock,
+    ) -> None:
+        mock_vad.process_chunk.side_effect = [["speech_start"], ["speech_end"], ["silence"]]
+        states: list[str] = []
+        listening_while_thinking: list[bool] = []
+        agent = StubAgent()
+        pipeline: CallPipeline
+
+        async def on_state(state: str) -> None:
+            states.append(state)
+
+        async def process(text: str, language: str) -> str:
+            listening_while_thinking.append(pipeline.listening)
+            return "Sure."
+
+        agent.process = process  # type: ignore[method-assign]
+
+        async def send(chunk: bytes) -> None:
+            pass
+
+        pipeline = CallPipeline("sess-s", "+911234567890", send, agent=agent, on_state=on_state)
+        await self._one_utterance(pipeline)
+
+        assert states == ["thinking", "listening"]
+        assert listening_while_thinking == [False]
+
+
 class TestPipelineTimeout:
     @pytest.mark.asyncio
     async def test_silence_timeout_ends_call(

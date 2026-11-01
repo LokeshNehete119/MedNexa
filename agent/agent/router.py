@@ -52,6 +52,36 @@ class LangChainProvider:
         return result
 
 
+def _rate_limited(exc: BaseException) -> bool:
+    return getattr(exc, "status_code", None) == 429
+
+
+class SpilloverProvider:
+    """Several models behind one provider: a rate-limited model hands the request to
+    the next one straight away; only the last one waits out its limit."""
+
+    def __init__(self, providers: Sequence[ChatProvider]) -> None:
+        self._providers = list(providers)
+        self.name = self._providers[0].name
+
+    async def ainvoke(
+        self, messages: Sequence[BaseMessage], tools: Sequence[dict[str, Any]]
+    ) -> AIMessage:
+        for provider in self._providers[:-1]:
+            try:
+                result = await provider.ainvoke(messages, tools)
+            except Exception as exc:
+                if not _rate_limited(exc):
+                    raise
+                logger.info("llm_rate_limited provider=%s", provider.name)
+                continue
+            self.name = provider.name
+            return result
+        last = self._providers[-1]
+        self.name = last.name
+        return await last.ainvoke(messages, tools)
+
+
 class NoProviderAvailable(RuntimeError):
     pass
 
@@ -184,14 +214,22 @@ def build_router(settings: AgentSettings) -> ModelRouter:
         if settings.cloud_provider == CloudProvider.GROQ and settings.groq_api_key:
             from langchain_groq import ChatGroq
 
-            cloud = LangChainProvider(
-                f"groq:{settings.cloud_model}",
-                ChatGroq(
-                    model_name=settings.cloud_model,
-                    api_key=settings.groq_api_key,
-                    temperature=settings.temperature,
-                ),
-            )
+            models = [settings.cloud_model, *settings.cloud_fallback_models]
+            groq = [
+                LangChainProvider(
+                    f"groq:{model}",
+                    ChatGroq(
+                        model_name=model,
+                        api_key=settings.groq_api_key,
+                        temperature=settings.temperature,
+                        reasoning_effort=settings.cloud_reasoning_effort,
+                        # Every model but the last passes a rate limit on at once.
+                        max_retries=2 if i == len(models) - 1 else 0,
+                    ),
+                )
+                for i, model in enumerate(models)
+            ]
+            cloud = groq[0] if len(groq) == 1 else SpilloverProvider(groq)
         elif settings.cloud_provider == CloudProvider.OPENAI and settings.openai_api_key:
             from langchain_openai import ChatOpenAI
 

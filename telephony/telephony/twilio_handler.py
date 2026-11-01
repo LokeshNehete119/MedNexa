@@ -188,6 +188,7 @@ async def stream_websocket(websocket: WebSocket, call_sid: str) -> None:
     stream_sid: str | None = None
     session_id: str | None = None
     rejected = asyncio.Event()
+    pipeline: CallPipeline | None = None
 
     # Audio queue: pipeline reads from this
     audio_queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=200)
@@ -219,6 +220,8 @@ async def stream_websocket(websocket: WebSocket, call_sid: str) -> None:
 
                 elif event == "media" and stream_sid is not None:
                     payload = msg.get("media", {}).get("payload", "")
+                    if pipeline is not None and not pipeline.listening:
+                        continue  # noise while the reply is worked out
                     pcm_16k = twilio_to_pipeline(base64.b64decode(payload))
                     if audio_queue.full():  # drop the oldest chunk rather than stall
                         audio_queue.get_nowait()

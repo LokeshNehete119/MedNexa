@@ -68,6 +68,8 @@ class MedNexaAgent:
             now=now,
         )
         self.language = "en"
+        # Set when the caller chose a language before the call: it is never switched.
+        self.fixed_language: str | None = None
         self._hospital: HospitalContext | None = None
         self._pending: list[AnyMessage] = []  # greeting, added to history on first turn
         self._lock = asyncio.Lock()
@@ -82,14 +84,14 @@ class MedNexaAgent:
         except Exception:  # never fail the call before it starts
             logger.exception("hospital_context_failed hospital_id=%s", self.ctx.hospital_id)
             hospital = None
-        text = greeting(hospital)
+        text = greeting(hospital, self.fixed_language)
         self._pending.append(AIMessage(content=text))
         return text
 
     async def process(self, text: str, language: str = "en") -> str:
         """Handle one caller utterance and return the reply to speak."""
         async with self._lock:
-            self.language = detect_language(
+            self.language = self.fixed_language or detect_language(
                 text, hint=normalize_language(language) or self.language
             )
             if not text.strip():
@@ -139,7 +141,9 @@ class MedNexaAgent:
     async def _system_prompt(self, language: str) -> str:
         hospital = await self._hospital_context()
         now = self._now() if self._now else hospital_now(hospital.timezone)
-        return render_system_prompt(hospital, language, now)
+        return render_system_prompt(
+            hospital, language, now, fixed_language=self.fixed_language is not None
+        )
 
     async def _reply_for_empty(self) -> str:
         return (
