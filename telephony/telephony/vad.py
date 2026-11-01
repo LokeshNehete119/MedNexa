@@ -56,6 +56,7 @@ class SileroVAD:
                 model="silero_vad",
                 force_reload=False,
                 onnx=False,
+                trust_repo=True,  # suppress interactive prompt (no stdin in Docker)
             )
             model.eval()
             cls._model = model

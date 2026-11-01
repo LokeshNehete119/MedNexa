@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MedNexa Voice Call Simulator</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: #0f172a;
+            color: #f8fafc;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+        }
+        .card {
+            background: #1e293b;
+            border: 1px solid #334155;
+            border-radius: 16px;
+            padding: 32px;
+            width: 440px;
+            box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5);
+            text-align: center;
+        }
+        h1 { margin-top: 0; font-size: 24px; color: #38bdf8; }
+        p { color: #94a3b8; font-size: 14px; }
+        .status-pill {
+            display: inline-block;
+            padding: 6px 14px;
+            border-radius: 9999px;
+            font-size: 13px;
+            font-weight: 600;
+            margin-bottom: 24px;
+            background: #334155;
+            color: #94a3b8;
+        }
+        .status-pill.connected { background: #065f46; color: #34d399; }
+        .status-pill.calling { background: #1e3a8a; color: #60a5fa; }
+        .btn {
+            background: #0284c7;
+            color: white;
+            border: none;
+            padding: 14px 28px;
+            font-size: 16px;
+            font-weight: 600;
+            border-radius: 9999px;
+            cursor: pointer;
+            width: 100%;
+            transition: all 0.2s;
+            margin-bottom: 12px;
+        }
+        .btn:hover { background: #0369a1; }
+        .btn.hangup { background: #e11d48; }
+        .btn.hangup:hover { background: #be123c; }
+        .btn:disabled { background: #475569; cursor: not-allowed; }
+        .visualizer {
+            height: 60px;
+            background: #0f172a;
+            border-radius: 8px;
+            margin: 16px 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #64748b;
+            font-size: 12px;
+            overflow: hidden;
+            position: relative;
+        }
+        .wave {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+            background: #38bdf8;
+            transition: height 0.05s ease;
+        }
+        .log-box {
+            background: #0f172a;
+            border: 1px solid #334155;
+            border-radius: 8px;
+            height: 140px;
+            overflow-y: auto;
+            text-align: left;
+            padding: 10px;
+            font-family: monospace;
+            font-size: 12px;
+            color: #cbd5e1;
+            margin-top: 16px;
+        }
+        .log-item { margin-bottom: 4px; }
+    </style>
+</head>
+<body>
+
+<div class="card">
+    <h1>📞 MedNexa Voice Agent</h1>
+    <p>Direct browser-to-agent audio call (No Twilio needed)</p>
+
+    <div id="statusPill" class="status-pill">Ready</div>
+
+    <div class="visualizer">
+        <span id="visText">Microphone Inactive</span>
+        <div id="waveBar" class="wave"></div>
+    </div>
+
+    <button id="callBtn" class="btn" onclick="toggleCall()">Start Call</button>
+
+    <div class="log-box" id="logBox">
+        <div class="log-item">System ready. Click "Start Call" to begin speaking.</div>
+    </div>
+</div>
+
+<script>
+    let ws = null;
+    let audioContext = null;
+    let micStream = null;
+    let scriptProcessor = null;
+    let isCalling = false;
+    let nextPlayTime = 0;
+
+    const callBtn = document.getElementById('callBtn');
+    const statusPill = document.getElementById('statusPill');
+    const logBox = document.getElementById('logBox');
+    const visText = document.getElementById('visText');
+    const waveBar = document.getElementById('waveBar');
+
+    function log(msg) {
+        const item = document.createElement('div');
+        item.className = 'log-item';
+        item.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+        logBox.appendChild(item);
+        logBox.scrollTop = logBox.scrollHeight;
+    }
+
+    async function toggleCall() {
+        if (!isCalling) {
+            await startCall();
+        } else {
+            stopCall();
+        }
+    }
+
+    async function startCall() {
+        try {
+            log("Requesting microphone access...");
+            micStream = await navigator.mediaDevices.getUserMedia({
+                audio: {
+                    channelCount: 1,
+                    echoCancellation: true,
+                    noiseSuppression: true,
+                    autoGainControl: true
+                }
+            });
+
+            audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+            nextPlayTime = audioContext.currentTime;
+
+            const wsUrl = "ws://localhost:8001/ws/call?phone=+919876543210";
+            log(`Connecting to ${wsUrl}...`);
+            ws = new WebSocket(wsUrl);
+            ws.binaryType = "arraybuffer";
+
+            ws.onopen = () => {
+                isCalling = true;
+                statusPill.className = "status-pill connected";
+                statusPill.textContent = "🟢 In Call";
+                callBtn.textContent = "Hang Up";
+                callBtn.className = "btn hangup";
+                visText.textContent = "🎙️ Listening... speak now!";
+                log("Call connected! Receptionist agent is listening.");
+                setupMicStream();
+            };
+
+            ws.onmessage = (event) => {
+                if (event.data instanceof ArrayBuffer) {
+                    playPcmChunk(event.data);
+                }
+            };
+
+            ws.onerror = (e) => {
+                log("WebSocket error: Connection refused or closed.");
+            };
+
+            ws.onclose = () => {
+                log("Call disconnected.");
+                stopCall();
+            };
+
+        } catch (err) {
+            log("Error starting call: " + err.message);
+            stopCall();
+        }
+    }
+
+    function setupMicStream() {
+        const source = audioContext.createMediaStreamSource(micStream);
+        // Process frames in 512 chunks (32ms at 16kHz)
+        scriptProcessor = audioContext.createScriptProcessor(512, 1, 1);
+
+        scriptProcessor.onaudioprocess = (e) => {
+            if (!isCalling || !ws || ws.readyState !== WebSocket.OPEN) return;
+
+            const inputFloat = e.inputBuffer.getChannelData(0);
+            const pcm16 = new Int16Array(inputFloat.length);
+
+            let sum = 0;
+            for (let i = 0; i < inputFloat.length; i++) {
+                let s = Math.max(-1, Math.min(1, inputFloat[i]));
+                pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+                sum += Math.abs(s);
+            }
+
+            // Simple visualizer bounce
+            let volume = (sum / inputFloat.length) * 100;
+            waveBar.style.height = Math.min(60, Math.max(4, volume * 3)) + "px";
+
+            // Send raw PCM bytes to telephony container
+            ws.send(pcm16.buffer);
+        };
+
+        source.connect(scriptProcessor);
+        scriptProcessor.connect(audioContext.destination);
+    }
+
+    function playPcmChunk(arrayBuffer) {
+        if (!audioContext) return;
+        const int16 = new Int16Array(arrayBuffer);
+        const float32 = new Float32Array(int16.length);
+
+        for (let i = 0; i < int16.length; i++) {
+            float32[i] = int16[i] / 32768.0;
+        }
+
+        const audioBuffer = audioContext.createBuffer(1, float32.length, 16000);
+        audioBuffer.getChannelData(0).set(float32);
+
+        const source = audioContext.createBufferSource();
+        source.buffer = audioBuffer;
+        source.connect(audioContext.destination);
+
+        const now = audioContext.currentTime;
+        if (nextPlayTime < now) nextPlayTime = now;
+        source.start(nextPlayTime);
+        nextPlayTime += audioBuffer.duration;
+    }
+
+    function stopCall() {
+        isCalling = false;
+        statusPill.className = "status-pill";
+        statusPill.textContent = "Call Ended";
+        callBtn.textContent = "Start Call";
+        callBtn.className = "btn";
+        visText.textContent = "Microphone Inactive";
+        waveBar.style.height = "4px";
+
+        if (scriptProcessor) {
+            scriptProcessor.disconnect();
+            scriptProcessor = null;
+        }
+        if (micStream) {
+            micStream.getTracks().forEach(t => t.stop());
+            micStream = null;
+        }
+        if (ws) {
+            ws.close();
+            ws = null;
+        }
+        if (audioContext) {
+            audioContext.close();
+            audioContext = null;
+        }
+    }
+</script>
+
+</body>
+</html>
+

@@ -33,16 +33,16 @@ class AgentSettings(BaseSettings):
 
     # ModelRouter behaviour
     max_latency_seconds: float = 3.0  # local call is abandoned for cloud after this
-    cloud_timeout_seconds: float = 15.0
+    cloud_timeout_seconds: float = 45.0
     circuit_failure_threshold: int = 3  # consecutive local failures before skipping local
     circuit_open_seconds: float = 300.0
     hindi_prefers_cloud: bool = True
 
     # Agent loop
     temperature: float = 0.2
-    max_tool_rounds: int = 6  # LLM <-> tool round trips per caller turn
-    max_history_messages: int = 40  # older turns are dropped from the LLM context
-    max_response_chars: int = 600  # replies are spoken; keep them short
+    max_tool_rounds: int = 4  # LLM <-> tool round trips per caller turn
+    max_history_messages: int = 10  # older turns are dropped from the LLM context
+    max_response_chars: int = 350  # replies are spoken; keep them very short
 
 
 @lru_cache
