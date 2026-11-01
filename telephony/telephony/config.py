@@ -5,7 +5,6 @@ All variables are prefixed MEDNEXA_TEL_ in the environment / .env file.
 
 from __future__ import annotations
 
-from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -20,13 +19,23 @@ class TelephonySettings(BaseSettings):
     backend_url: str = "http://localhost:8000"
     """Base URL of the Part 1 FastAPI backend (no trailing slash)."""
 
+    backend_api_key: str = ""
+    """Service key for the backend's /calls routes (the backend's MEDNEXA_SERVICE_API_KEY).
+    Without it the backend rejects call-log requests with 401 once auth is enabled."""
+
     hospital_id: str = ""
     """UUID of the hospital this pipeline serves. Set in .env."""
+
+    use_stub_agent: bool = False
+    """Use the canned StubAgent even when Part 2's agent package is installed."""
 
     # ── Twilio ───────────────────────────────────────────────────────────────
     twilio_account_sid: str = ""
     twilio_auth_token: str = ""
     twilio_phone_number: str = ""
+    transfer_phone_number: str = ""
+    """Staff number (E.164) that calls are connected to when the agent hands over to a
+    person. Empty = the caller is asked to call reception instead."""
 
     # ── STT (Faster-Whisper) ─────────────────────────────────────────────────
     whisper_model_size: str = "large-v3"

@@ -138,18 +138,27 @@ immediately if set. This lets callers interrupt the AI mid-sentence.
 
 ## Integration with Part 2 (AI Agent)
 
-Part 3 is designed to be agent-agnostic. Connect Part 2's agent:
+The pipeline creates one agent per call with `create_agent()`
+(`telephony/agent_interface.py`): Part 2's `MedNexaAgent` when its package is
+installed, otherwise the canned `StubAgent` (with a warning in the logs).
 
-```python
-from mednexa_agent import MedNexaAgent   # Part 2's module
-from telephony.pipeline import CallPipeline
-
-agent = MedNexaAgent(caller_phone="+919876543210", hospital_id="<uuid>")
-pipeline = CallPipeline(session_id, caller_phone, send_audio, agent=agent)
-await pipeline.run(audio_stream)
+```bash
+uv sync --extra agent     # installs ../agent (and the backend service layer it uses)
 ```
 
-Part 2's agent must implement the `AgentInterface` protocol:
+The agent reads the database directly, so the telephony process also needs
+`MEDNEXA_DATABASE_URL` and the agent's `MEDNEXA_AGENT_*` model settings (see
+`agent/.env.example`). Set `MEDNEXA_TEL_USE_STUB_AGENT=true` to force the stub.
+
+When the call ends, the session is closed with the agent's `call_outcome` and
+`escalated` flag (the stub reports `OTHER`).
+
+When the agent hands a call over to a person, the AI stops and, on Twilio calls, the
+call is connected to `MEDNEXA_TEL_TRANSFER_PHONE_NUMBER` once the caller has heard
+"please stay on the line". Without that number (or on the local WebSocket), the caller
+is asked to call reception directly.
+
+Any agent implementing the `AgentInterface` protocol can be passed explicitly:
 ```python
 async def get_greeting(self) -> str: ...
 async def process(self, text: str, language: str) -> str: ...
