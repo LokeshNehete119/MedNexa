@@ -1,20 +1,7 @@
-"""Agent interface — stub for Part 2's MedNexaAgent.
+"""What the call pipeline needs from an agent, and the agent it uses.
 
-Part 3 (this module) drives the full call pipeline but must stay decoupled from
-Part 2's LangGraph agent so both can be developed and tested independently.
-
-This file defines the ``AgentInterface`` protocol, a ``StubAgent`` that returns
-hard-coded responses, and ``create_agent``, which the pipeline uses to build one
-agent per call: Part 2's ``MedNexaAgent`` (a regular dependency of this package),
-falling back to the stub with a warning only if it cannot be imported, e.g. in a
-minimal test environment. Set ``MEDNEXA_TEL_USE_STUB_AGENT=true`` to force the stub.
-
-The interface Part 2 must implement:
-    async def get_greeting(self) -> str
-    async def process(self, text: str, language: str) -> str
-    async def get_summary(self) -> str | None
-    call_outcome: str      # a backend CallOutcome, e.g. BOOKED, INFO_PROVIDED, OTHER
-    escalated: bool        # True if the caller was handed to staff
+Each call gets the real MedNexaAgent. The StubAgent, which only echoes the caller,
+is used when MEDNEXA_TEL_USE_STUB_AGENT=true or the agent package isn't installed.
 """
 
 from __future__ import annotations
@@ -28,7 +15,7 @@ log = get_logger("agent")
 
 @runtime_checkable
 class AgentInterface(Protocol):
-    """Protocol that Part 2's MedNexaAgent must satisfy."""
+    """Implemented by agent.MedNexaAgent."""
 
     async def get_greeting(self) -> str:
         """Return the opening greeting in the caller's default language."""
@@ -54,13 +41,8 @@ class AgentInterface(Protocol):
 
 
 class StubAgent:
-    """Minimal stub used during development / unit tests.
+    """Echoes the caller back. For tests and running without the agent."""
 
-    Responds with a canned greeting and echoes back what the caller says.
-    Replace with Part 2's real agent in production.
-    """
-
-    # What the call pipeline reports when the call ends (see AgentInterface).
     call_outcome: str = "OTHER"
     escalated: bool = False
 
@@ -90,12 +72,12 @@ class StubAgent:
 
 
 def create_agent(caller_phone: str, hospital_id: str) -> AgentInterface:
-    """One agent per call: Part 2's MedNexaAgent if available, else the stub."""
+    """A new agent for each call."""
     from telephony.config import get_settings
 
     if not get_settings().use_stub_agent:
         try:
-            from agent import MedNexaAgent  # Part 2
+            from agent import MedNexaAgent
         except ImportError:
             log.warning("mednexa_agent_unavailable", fallback="StubAgent")
         else:

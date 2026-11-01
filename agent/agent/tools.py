@@ -1,4 +1,4 @@
-"""Agent tools: thin wrappers around Part 1's service contract (task 2.4).
+"""Agent tools: thin wrappers around the backend's service contract (app.services.contracts).
 
 Each tool:
 - takes LLM-provided arguments validated by a Pydantic model;
@@ -58,7 +58,7 @@ class ToolInputError(ValueError):
     """An argument the LLM supplied could not be understood."""
 
 
-# --- argument parsing helpers -------------------------------------------------------
+# Argument parsing helpers
 
 _TIME_12H = re.compile(r"^\s*(\d{1,2})(?::(\d{2}))?\s*([ap])\.?\s*m\.?\s*$", re.I)
 
@@ -138,7 +138,7 @@ def _require_caller(ctx: ToolContext) -> str:
     return ctx.caller_phone
 
 
-# --- tool argument models -----------------------------------------------------------
+# Tool argument models
 
 
 class NoArgs(BaseModel):
@@ -198,7 +198,7 @@ class TransferArgs(BaseModel):
     reason: str = Field(description="Why the caller needs a human")
 
 
-# --- tool implementations -----------------------------------------------------------
+# Tool implementations
 
 
 async def get_hospital_info(
@@ -392,7 +392,7 @@ async def transfer_to_human(ctx: ToolContext, db: AsyncSession, a: TransferArgs)
     }
 
 
-# --- registry -----------------------------------------------------------------------
+# Registry
 
 ToolFn = Callable[[ToolContext, AsyncSession, Any], Awaitable[dict[str, Any]]]
 

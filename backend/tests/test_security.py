@@ -31,7 +31,7 @@ def forge(payload: dict, secret: str, header: dict | None = None) -> str:
     return f"{header_b64}.{body_b64}.{b64(signature.digest())}"
 
 
-# --- tokens ---------------------------------------------------------------------
+# Tokens
 
 
 def test_token_signed_with_the_published_default_secret_is_rejected() -> None:
@@ -82,7 +82,7 @@ def test_expired_token_is_rejected() -> None:
         decode_access_token(token)
 
 
-# --- passwords ------------------------------------------------------------------
+# Passwords
 
 
 def test_the_stored_hash_cannot_be_used_as_the_password() -> None:

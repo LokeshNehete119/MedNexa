@@ -1,4 +1,4 @@
-# MedNexa: full stack (Part 5, task 5.1).
+# MedNexa: the whole system in Docker.
 #
 #   cp .env.example .env     # then fill in the required secrets (see the file)
 #   docker compose up --build -d
@@ -11,7 +11,7 @@
 x-database-url: &database-url postgresql+asyncpg://${POSTGRES_USER:-mednexa}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@db:5432/${POSTGRES_DB:-mednexa}
 
 services:
-  # ── Data layer ──────────────────────────────────────────────────────────────
+  # Data layer
   db:
     image: postgres:16-alpine
     container_name: mednexa-db
@@ -64,7 +64,7 @@ services:
     networks:
       - mednexa-net
 
-  # ── Backend API (Part 1) ────────────────────────────────────────────────────
+  # Backend API
   api:
     build:
       context: ./backend
@@ -102,7 +102,7 @@ services:
     networks:
       - mednexa-net
 
-  # ── Admin dashboard (Part 4) ────────────────────────────────────────────────
+  # Admin dashboard
   dashboard:
     build:
       context: ./dashboard
@@ -131,7 +131,7 @@ services:
     networks:
       - mednexa-net
 
-  # ── Voice / telephony gateway (Part 3 + the Part 2 agent) ───────────────────
+  # Voice / telephony gateway
   telephony:
     build:
       context: .
@@ -140,7 +140,7 @@ services:
     ports:
       - "8001:8001" # Twilio webhook / media stream: expose through an HTTPS proxy
     environment:
-      # The agent reads the database directly (Part 2's service layer)...
+      # The agent reads the database directly through the backend's service layer...
       MEDNEXA_DATABASE_URL: *database-url
       # ...and the pipeline writes call logs through the API with the service key.
       MEDNEXA_TEL_BACKEND_URL: http://api:8000
@@ -166,9 +166,6 @@ services:
       MEDNEXA_AGENT_CLOUD_REASONING_EFFORT: ${MEDNEXA_AGENT_CLOUD_REASONING_EFFORT:-}
       MEDNEXA_AGENT_GROQ_API_KEY: ${MEDNEXA_AGENT_GROQ_API_KEY:-}
       MEDNEXA_AGENT_OPENAI_API_KEY: ${MEDNEXA_AGENT_OPENAI_API_KEY:-}
-    volumes:
-      - ./telephony/telephony/main.py:/app/telephony/main.py
-      - ./agent/agent/config.py:/workspace/agent/agent/config.py
     depends_on:
       api:
         condition: service_healthy
@@ -176,7 +173,7 @@ services:
     networks:
       - mednexa-net
 
-  # ── Local LLM (Ollama) ──────────────────────────────────────────────────────
+  # Local LLM (Ollama)
   # Internal only: Ollama has no authentication. Pull a model once after the first start:
   #   docker compose exec ollama ollama pull llama3.1:8b
   # On an NVIDIA GPU add docker-compose.gpu.yml, or Ollama runs on the CPU.

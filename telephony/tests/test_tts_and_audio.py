@@ -13,7 +13,7 @@ from telephony.tts import (
     TTSEngine,
 )
 
-# ── TTSEngine ─────────────────────────────────────────────────────────────────
+# TTSEngine
 
 
 class TestTTSEngine:
@@ -93,7 +93,7 @@ class TestTTSEngine:
 # The μ-law codec is tested in tests/test_audio_codec.py.
 
 
-# ── Audio quality ──────────────────────────────────────────────────────────────
+# Audio quality
 
 
 class TestAudioUtils:

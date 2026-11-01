@@ -1,13 +1,6 @@
-"""Call recording helper (task 3.13).
+"""Call recordings: {recordings_dir}/{session_id}_{YYYYMMDD_HHMMSS}.wav, 16 kHz mono.
 
-Records each call to a WAV file (16 kHz, mono, int16) when enabled in config.
-A consent prompt is played at the start of any recorded call.
-
-Recording file naming: ``{recordings_dir}/{session_id}_{YYYYMMDD_HHMMSS}.wav``
-
-The recorder writes a valid WAV header before the first audio chunk and keeps
-appending raw PCM data as chunks arrive. On ``close()``, the header is patched
-with the final data size.
+Recording is off unless enabled, and a recorded call starts with a consent notice.
 """
 
 from __future__ import annotations
@@ -21,8 +14,7 @@ from telephony.logging_setup import get_logger
 
 log = get_logger("recorder")
 
-# Callers can't opt out mid-call yet (keypad/DTMF input is not implemented,
-# plan task 3.11), so the prompt must not offer an opt-out: it only informs.
+# Callers can't opt out mid-call (there is no keypad input), so the notice only informs.
 CONSENT_PROMPT_EN = (
     "Please note that this call is recorded for quality and training purposes. "
     "If you do not want to be recorded, you can end the call now."
@@ -34,13 +26,7 @@ CONSENT_PROMPT_HI = (
 
 
 class CallRecorder:
-    """Write call audio to a WAV file.
-
-    Usage::
-
-        async with CallRecorder(session_id) as rec:
-            rec.write(pcm_bytes)
-    """
+    """Writes a call's audio to a WAV file; use it as a context manager."""
 
     def __init__(self, session_id: str) -> None:
         cfg = get_settings()

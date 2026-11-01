@@ -1,4 +1,4 @@
-"""Failed-login throttling (plan task 5.4 covers rate limiting; this protects sign-in).
+"""Failed-login throttling: slows down password guessing on the sign-in route.
 
 In-memory and per process: enough for the single API process this project runs
 today; a multi-worker deployment would need Redis (already in the compose file).

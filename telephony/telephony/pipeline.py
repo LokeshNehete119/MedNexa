@@ -1,27 +1,7 @@
-"""CallPipeline — orchestrates a single phone call end-to-end.
+"""One phone call: caller audio -> VAD -> Whisper -> agent -> TTS -> caller.
 
-Flow per utterance:
-  audio_stream → VAD → accumulate utterance → STT → Agent → TTS → play back
-
-Key responsibilities:
-  3.2  Audio stream handler
-  3.3  VAD integration (Silero VAD)
-  3.4  Faster-Whisper STT
-  3.5  Language detection from STT output
-  3.6  Piper/Edge TTS
-  3.8  Audio streaming back to caller
-  3.9  Barge-in detection (stop TTS when caller speaks)
-  3.10 Call session management (start, end, timeout)
-  3.12 Audio quality optimisation (via AudioProcessor)
-  3.13 Call recording
-
-Usage (Twilio MediaStreams WebSocket)::
-
-    pipeline = CallPipeline(session_id, caller_phone, send_audio_fn)
-    await pipeline.run(audio_byte_iterator)
-
-``send_audio_fn`` is an async callable that sends a raw PCM chunk to the
-caller's audio stream (Twilio / Asterisk bridge provides this).
+The call handlers (Twilio media streams and the /call web page) feed audio into
+``CallPipeline.run`` and play back what it sends through ``send_audio``.
 """
 
 from __future__ import annotations
@@ -52,7 +32,7 @@ StateFn = Callable[[str], Awaitable[None]]
 # Pipeline audio: 16 kHz mono int16 -> 32000 bytes per second of playback.
 PCM_BYTES_PER_SECOND = 16000 * 2
 
-# Closing phrases (Part 2's agent says these only in its final reply).
+# The agent says these only in its final reply.
 _FAREWELL = re.compile(r"\bgood\s?-?bye\b|\bbye\b|अलविदा|धन्यवाद[\s,।!]*नमस्ते", re.IGNORECASE)
 
 # What Whisper writes for breathing, clicks or background noise: never a caller's words.
@@ -68,36 +48,19 @@ _NO_TRANSFER = {
     "hi": "माफ़ कीजिए, इस लाइन पर स्टाफ़ से जोड़ना संभव नहीं है। कृपया अस्पताल के रिसेप्शन पर सीधे कॉल करें। नमस्ते!",
 }
 
-# Maximum buffer for one utterance (prevents runaway memory if VAD misses end)
-MAX_UTTERANCE_BYTES = 16000 * 2 * 30  # 30 seconds of 16 kHz int16
+# 30 s of audio: an utterance is cut off here if VAD never hears it end.
+MAX_UTTERANCE_BYTES = PCM_BYTES_PER_SECOND * 30
 
 
 class CallPipeline:
-    """Manages the full lifetime of a single inbound call.
+    """One inbound call, from the greeting to the end of the call.
 
-    Parameters
-    ----------
-    session_id:
-        UUID of the ``CallSession`` row already created via Part 1's API.
-    caller_phone:
-        E.164 phone number of the caller (e.g. "+919876543210").
-    send_audio:
-        Async function that sends a raw PCM chunk to the caller.
-    clear_audio:
-        Optional async function that discards audio already queued on the
-        caller's side (Twilio's "clear"), used when the caller barges in.
-    transfer:
-        Optional async function that connects the call to hospital staff when
-        the agent escalates; returns False if it could not.
-    agent:
-        MedNexaAgent or StubAgent instance.
-    on_state:
-        Optional async function told "thinking" when the caller's turn ends and
-        "listening" once the reply has been sent, so a client can show it.
-    language:
-        "en" or "hi" when the caller chose a language up front: speech is then
-        recognised in that language and the greeting is spoken in it. Left unset,
-        the language is detected afresh from every utterance.
+    ``session_id`` is the backend call session the transcript is written to.
+    ``clear_audio`` drops audio already queued on the caller's side (barge-in),
+    ``transfer`` connects the caller to staff and returns False if it couldn't,
+    and ``on_state`` is told "thinking" / "listening" as the turn changes.
+    ``language`` ("en" or "hi") fixes the call's language; left unset, it is
+    detected from every utterance.
     """
 
     def __init__(
@@ -121,7 +84,6 @@ class CallPipeline:
         self._on_state = on_state
         self._cfg = cfg
 
-        # Core components
         self._vad = SileroVAD()
         self._stt = FasterWhisperSTT()
         self._tts = TTSEngine()
@@ -130,7 +92,6 @@ class CallPipeline:
         self._api = BackendClient()
         self._recorder = CallRecorder(session_id)
 
-        # State
         self._language: str = language or "en"
         self._language_chosen = language is not None
         if self._language_chosen and hasattr(self._agent, "fixed_language"):
@@ -145,24 +106,16 @@ class CallPipeline:
         self._start_time: float = 0.0
         self._last_speech_time: float = 0.0
 
-    # ── public entry point ────────────────────────────────────────────────────
-
     async def run(self, audio_stream: AsyncIterator[bytes]) -> None:
-        """Drive the call from audio input to audio output.
-
-        This coroutine returns when the call ends (caller hangs up,
-        timeout, or the agent says goodbye).
-        """
+        """Returns when the caller hangs up, the call times out or the agent says goodbye."""
         self._start_time = time.monotonic()
         self._last_speech_time = self._start_time
 
         with self._recorder:
-            # Play consent prompt if recording is enabled
             if self._recorder.enabled:
                 await self._speak(self._recorder.consent_prompt(self._language))
                 await self._log("ASSISTANT", self._recorder.consent_prompt(self._language))
 
-            # Play opening greeting
             greeting = await self._agent.get_greeting()
             await self._speak(greeting)
             await self._log("ASSISTANT", greeting)
@@ -181,17 +134,12 @@ class CallPipeline:
             finally:
                 await self._end_call()
 
-    # ── stream processing ─────────────────────────────────────────────────────
-
     async def _process_stream(self, audio_stream: AsyncIterator[bytes]) -> None:
-        """Main loop: read audio chunks, run VAD, accumulate utterances, transcribe."""
         async for raw_chunk in audio_stream:
             if not self._call_active:
                 break
 
-            # Check silence timeout
-            elapsed_silence = time.monotonic() - self._last_speech_time
-            if elapsed_silence > self._cfg.silence_timeout_seconds:
+            if time.monotonic() - self._last_speech_time > self._cfg.silence_timeout_seconds:
                 log.info("silence_timeout", session_id=self.session_id)
                 silence_msg = (
                     "Are you still there? Goodbye!"
@@ -201,21 +149,15 @@ class CallPipeline:
                 await self._speak(silence_msg)
                 break
 
-            # Optionally apply noise suppression to inbound audio
             chunk = self._processor.process(raw_chunk)
-
-            # Write to recording (inbound side)
             self._recorder.write(chunk)
 
-            # Run VAD
             events = self._vad.process_chunk(chunk)
             speaking = "speech_start" in events or "speech" in events
             utterance_ends = "speech_end" in events
 
             if speaking:
                 self._last_speech_time = time.monotonic()
-
-                # Barge-in: interrupt TTS if the caller is still hearing it
                 if self._cfg.barge_in_enabled and self._is_playing():
                     await self._interrupt_playback()
 
@@ -226,7 +168,6 @@ class CallPipeline:
                 self._utterance_buf.extend(chunk)
 
             if utterance_ends or len(self._utterance_buf) > MAX_UTTERANCE_BYTES:
-                # (the size check is a safety valve against runaway memory)
                 await self._process_utterance()
 
     @property
@@ -239,8 +180,6 @@ class CallPipeline:
         if self._on_state is not None:
             with contextlib.suppress(Exception):  # the client may have gone
                 await self._on_state(state)
-
-    # ── utterance handling ────────────────────────────────────────────────────
 
     async def _process_utterance(self) -> None:
         if not self._utterance_buf:
@@ -262,13 +201,10 @@ class CallPipeline:
         self._utterance_buf.clear()
         self._vad.reset()
 
-        # STT
         t0 = time.monotonic()
         # Level the whole utterance (not per chunk) so quiet lines transcribe well.
         pcm = normalise_audio(pcm)
-
-        # Whisper is blocking: run it off the event loop so other calls keep flowing.
-        # Without a chosen language each utterance's language is detected afresh.
+        # Whisper blocks: run it off the event loop so other calls keep flowing.
         hint = self._language if self._language_chosen else None
         result = await asyncio.to_thread(self._stt.transcribe_bytes, pcm, language_hint=hint)
         stt_ms = int((time.monotonic() - t0) * 1000)
@@ -284,7 +220,6 @@ class CallPipeline:
             )
             return
 
-        # Update detected language
         if result.language != self._language:
             log.info(
                 "language_switch",
@@ -302,15 +237,11 @@ class CallPipeline:
             stt_ms=stt_ms,
         )
 
-        # Log the caller's turn
         await self._log("USER", text)
 
-        # Reset the silence timer while the agent is thinking so a slow LLM
-        # response (e.g. Groq rate-limit retry taking 20-45 s) doesn't fire
-        # the silence-timeout check on the very next audio chunk.
+        # The silence timer restarts around the reply, so a slow model or a long
+        # reply isn't counted as the caller going quiet.
         self._last_speech_time = time.monotonic()
-
-        # Agent
         t1 = time.monotonic()
         response = await self._agent.process(text, self._language)
         agent_ms = int((time.monotonic() - t1) * 1000)
@@ -322,23 +253,13 @@ class CallPipeline:
             agent_ms=agent_ms,
         )
 
-        # Reset the silence timer again once we have a reply — TTS is about to
-        # play and the caller will be listening, not speaking.
-        self._last_speech_time = time.monotonic()
-
-        # Log the agent's turn
         await self._log("ASSISTANT", response)
-
-        # TTS
         await self._speak(response, language=self._language)
-
-        # After TTS finishes the caller needs time to respond; extend the
-        # silence window so we don't hang up immediately after a long reply.
         self._last_speech_time = time.monotonic()
 
         if getattr(self._agent, "escalated", False):
             await self._hand_over()
-        elif self._is_farewell(response):  # the agent closed the call
+        elif self._is_farewell(response):
             self._call_active = False
 
     async def _hand_over(self) -> None:
@@ -353,8 +274,6 @@ class CallPipeline:
         await self._speak(message)
         await self._log("ASSISTANT", message)
 
-    # ── TTS playback ──────────────────────────────────────────────────────────
-
     def _is_playing(self) -> bool:
         return time.monotonic() < self._playback_until
 
@@ -367,7 +286,6 @@ class CallPipeline:
             await self._clear_audio()
 
     async def _speak(self, text: str, language: str | None = None) -> None:
-        """Synthesise text and stream audio to the caller."""
         lang = language or self._language
         self._barge_in_triggered.clear()
 
@@ -384,23 +302,16 @@ class CallPipeline:
             tts_ms = int((time.monotonic() - t0) * 1000)
             log.debug("tts_done", tts_ms=tts_ms, lang=lang)
 
-    # ── logging ───────────────────────────────────────────────────────────────
-
     async def _log(self, role: str, content: str) -> None:
-        """Append a turn to the call log (non-blocking, errors are swallowed)."""
         await self._api.append_log(self.session_id, role, content)
 
-    # ── call lifecycle ────────────────────────────────────────────────────────
-
     async def _end_call(self) -> None:
-        """Finalise session in the backend and clean up resources."""
         try:
             summary = await self._agent.get_summary()
         except Exception:
             log.exception("agent_summary_failed", session_id=self.session_id)
             summary = None
-        # Part 2's agent reports a backend CallOutcome and whether it handed the
-        # caller to staff; other agents (e.g. the stub) fall back to OTHER.
+        # The stub agent has no outcome of its own.
         await self._api.end_call(
             self.session_id,
             outcome=getattr(self._agent, "call_outcome", "OTHER"),
@@ -410,8 +321,6 @@ class CallPipeline:
         )
         await self._api.aclose()
         log.info("pipeline_done", session_id=self.session_id)
-
-    # ── helpers ───────────────────────────────────────────────────────────────
 
     def _is_noise(self, text: str, confidence: float) -> bool:
         return (

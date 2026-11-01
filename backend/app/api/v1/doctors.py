@@ -61,7 +61,7 @@ async def delete_doctor(db: DbSession, doctor_id: uuid.UUID) -> None:
     await doctor_service.deactivate_doctor(db, doctor_id)
 
 
-# --- schedule overrides -------------------------------------------------------------
+# Schedule overrides
 
 
 @router.get("/doctors/{doctor_id}/schedule", tags=["schedules"])

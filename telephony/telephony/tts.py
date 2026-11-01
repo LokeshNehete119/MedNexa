@@ -1,18 +1,8 @@
-"""Text-to-Speech engines: Piper (local, primary) and Edge-TTS (cloud, fallback).
+"""Text to speech: Piper (local) or Microsoft Edge voices (online), as 16 kHz mono PCM.
 
-Architecture:
-  - ``PiperTTS``: calls the `piper` CLI binary and streams WAVE audio.
-  - ``EdgeTTS``: uses the ``edge-tts`` Python library (free Microsoft cloud).
-  - ``TTSEngine``: unified interface that tries Piper first, falls back to Edge.
-
-Both engines expose an ``async_synthesize`` method that yields raw PCM audio
-chunks (16-bit, mono, 16 kHz) suitable for direct playback to the caller.
-
-Piper setup:
-  Download the binary from https://github.com/rhasspy/piper/releases and
-  put it in your PATH (or set ``MEDNEXA_TEL_PIPER_BINARY``).
-  Download voice models (.onnx + .json) from Hugging Face and put them in
-  the directory set by ``MEDNEXA_TEL_PIPER_MODELS_DIR``.
+Piper needs its binary (https://github.com/rhasspy/piper/releases) on PATH or in
+MEDNEXA_TEL_PIPER_BINARY, and .onnx voices in MEDNEXA_TEL_PIPER_MODELS_DIR. Without
+them, or if Piper fails, the Edge voices are used.
 """
 
 from __future__ import annotations
@@ -30,33 +20,22 @@ from telephony.logging_setup import get_logger
 
 log = get_logger("tts")
 
-# Output audio spec (must match what Asterisk/Twilio expects)
 SAMPLE_RATE = 16000
 CHANNELS = 1
-SAMPLE_WIDTH = 2  # bytes, int16
+SAMPLE_WIDTH = 2
 
 # Used when a Piper voice has no readable .onnx.json (the rate of *-medium voices).
 PIPER_DEFAULT_RATE = 22050
 
-# WAV header is 44 bytes; we strip it and send raw PCM downstream.
 WAV_HEADER_BYTES = 44
 
-# How large each yielded chunk is (100 ms of audio)
+# Audio is sent to the caller in 100 ms chunks.
 CHUNK_MS = 100
-CHUNK_SAMPLES = SAMPLE_RATE * CHUNK_MS // 1000  # 1600 samples
-CHUNK_BYTES = CHUNK_SAMPLES * SAMPLE_WIDTH  # 3200 bytes
-
-
-# ── Piper TTS ─────────────────────────────────────────────────────────────────
+CHUNK_SAMPLES = SAMPLE_RATE * CHUNK_MS // 1000
+CHUNK_BYTES = CHUNK_SAMPLES * SAMPLE_WIDTH
 
 
 class PiperTTS:
-    """Local TTS using the Piper binary.
-
-    Generates audio by running the piper binary as a subprocess and capturing
-    its stdout (raw WAV). The WAV header is stripped and raw PCM is returned.
-    """
-
     def __init__(self) -> None:
         cfg = get_settings()
         self._binary = cfg.piper_binary
@@ -81,7 +60,6 @@ class PiperTTS:
             return PIPER_DEFAULT_RATE
 
     def _is_available(self) -> bool:
-        """Check if the piper binary exists and a model file is present."""
         try:
             result = subprocess.run(
                 [self._binary, "--version"],
@@ -93,7 +71,6 @@ class PiperTTS:
             return False
 
     async def synthesize(self, text: str, language: str = "en") -> bytes:
-        """Synthesize text and return raw PCM bytes (blocking subprocess)."""
         voice = self._voice_path(language)
         if not voice.exists():
             raise FileNotFoundError(f"Piper model not found: {voice}")
@@ -118,21 +95,13 @@ class PiperTTS:
         return resample(raw_out, self._voice_sample_rate(voice), SAMPLE_RATE)
 
     async def async_synthesize(self, text: str, language: str = "en") -> AsyncIterator[bytes]:
-        """Stream raw PCM chunks from Piper."""
         pcm = await self.synthesize(text, language)
         for i in range(0, len(pcm), CHUNK_BYTES):
             yield pcm[i : i + CHUNK_BYTES]
 
 
-# ── Edge-TTS ──────────────────────────────────────────────────────────────────
-
-
 class EdgeTTS:
-    """Cloud TTS using Microsoft Edge's free neural voices.
-
-    Outputs MP3 which is converted to raw PCM via pydub/ffmpeg.
-    Requires ffmpeg to be installed (or pydub's AudioSegment will fail).
-    """
+    """Microsoft Edge neural voices. They return MP3, which needs ffmpeg to decode."""
 
     def __init__(self) -> None:
         cfg = get_settings()
@@ -145,14 +114,12 @@ class EdgeTTS:
         return self._voices.get(language, self._voices["en"])
 
     async def synthesize(self, text: str, language: str = "en") -> bytes:
-        """Synthesize text via Edge-TTS and return raw PCM bytes."""
         import edge_tts  # type: ignore[import-untyped]
         from pydub import AudioSegment  # type: ignore[import-untyped]
 
         voice = self._voice(language)
         communicate = edge_tts.Communicate(text, voice)
 
-        # Collect all audio chunks from Edge-TTS
         mp3_chunks: list[bytes] = []
         async for chunk in communicate.stream():
             if chunk["type"] == "audio":
@@ -162,7 +129,6 @@ class EdgeTTS:
         if not mp3_data:
             return b""
 
-        # Convert MP3 → 16 kHz mono int16 PCM using pydub
         with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
             f.write(mp3_data)
             tmp_path = f.name
@@ -175,28 +141,20 @@ class EdgeTTS:
         return audio.raw_data  # type: ignore[return-value]
 
     async def async_synthesize(self, text: str, language: str = "en") -> AsyncIterator[bytes]:
-        """Stream raw PCM chunks from Edge-TTS."""
         pcm = await self.synthesize(text, language)
         for i in range(0, len(pcm), CHUNK_BYTES):
             yield pcm[i : i + CHUNK_BYTES]
 
 
-# ── Unified engine ────────────────────────────────────────────────────────────
-
-
 class TTSEngine:
-    """Unified TTS facade: tries Piper first, falls back to Edge-TTS.
-
-    On first call, piper availability is checked once and remembered.
-    If piper is not available or fails, Edge-TTS is used automatically.
-    """
+    """Piper when it is set up (checked once), otherwise or on failure Edge."""
 
     def __init__(self) -> None:
         cfg = get_settings()
         self._prefer_piper = cfg.tts_engine.lower() == "piper"
         self._piper = PiperTTS()
         self._edge = EdgeTTS()
-        self._piper_ok: bool | None = None  # None = not yet checked
+        self._piper_ok: bool | None = None
 
     def _use_piper(self) -> bool:
         if not self._prefer_piper:

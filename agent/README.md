@@ -1,8 +1,8 @@
-# MedNexa Agent (Part 2)
+# MedNexa agent
 
 The AI receptionist: a LangGraph agent that understands the caller (English or
-Hindi), calls tools backed by Part 1's service layer, and returns a short reply for
-Part 3 to speak.
+Hindi), calls tools backed by the backend's service layer, and returns a short reply for the
+call pipeline to speak.
 
 **Stack:** Python 3.11+ · LangGraph · LangChain (Ollama / Groq / OpenAI) · the
 `mednexa-backend` package (editable path dependency) · uv
@@ -24,7 +24,7 @@ uv run mednexa-chat              # talk to the agent in the terminal
 caller (`--phone`, `--hospital-id` to override, `-v` to log routing and tools). Type
 `/quit` to end the call and see the summary and outcome.
 
-## Using it from the call pipeline (Part 3)
+## Using it from the call pipeline
 
 `MedNexaAgent` implements `telephony/telephony/agent_interface.py`'s
 `AgentInterface`. Create one per call:
@@ -62,20 +62,20 @@ await api.end_call(
 caller text ──► agent node ──(tool calls)──► tools node ──► agent node … ──► guardrail ──► reply
                     │                            │
              ModelRouter                 app.services.contracts
-        (Ollama ⇄ Groq/OpenAI)                (Part 1)
+        (Ollama or Groq/OpenAI)              (backend)
 ```
 
-| Module | Plan task | What it does |
-|---|---|---|
-| `router.py` | 2.2, 2.3 | `ModelRouter`: local model under a latency cap, cloud on timeout/error, Hindi → cloud, circuit breaker after repeated local failures |
-| `tools.py` | 2.4, 2.9 | 11 tools over the service contract; caller phone and hospital come from the call, never the LLM |
-| `graph.py` | 2.5, 2.8 | LangGraph state machine with per-call memory and a tool-round limit |
-| `prompts.py` | 2.6 | System prompt from the database: hospital, departments, doctors, today's free slots, call rules |
-| `language.py` | 2.7 | Hindi/English detection (Devanagari, Hinglish, STT hint; Whisper's `ur` → `hi`) |
-| `guardrails.py` | 2.10 | Blocks medical advice and booking/cancel/token claims not backed by a tool result; strips IDs; trims length |
-| `events.py` | — | Records tool results for the summary, call outcome and grounding checks |
-| `agent.py` | 2.11, 2.12 | `MedNexaAgent`: greeting, turns, summary, outcome, failure handling |
-| `evals.py` | 2.13 | Scenario runner against a real model |
+| Module | What it does |
+|---|---|
+| `router.py` | `ModelRouter`: local model under a latency cap, cloud on timeout/error, Hindi → cloud, circuit breaker after repeated local failures |
+| `tools.py` | 11 tools over the service contract; caller phone and hospital come from the call, never the LLM |
+| `graph.py` | LangGraph state machine with per-call memory and a tool-round limit |
+| `prompts.py` | System prompt from the database: hospital, departments, doctors, today's free slots, call rules |
+| `language.py` | Hindi/English detection (Devanagari, Hinglish, STT hint; Whisper's `ur` → `hi`) |
+| `guardrails.py` | Blocks medical advice and booking/cancel/token claims not backed by a tool result; strips IDs; trims length |
+| `events.py` | Records tool results for the summary, call outcome and grounding checks |
+| `agent.py` | `MedNexaAgent`: greeting, turns, summary, outcome, failure handling |
+| `evals.py` | Scenario runner against a real model |
 
 ### Tools
 

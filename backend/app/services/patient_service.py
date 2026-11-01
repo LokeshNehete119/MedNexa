@@ -58,7 +58,7 @@ async def upsert_patient(db: AsyncSession, hospital_id: uuid.UUID, data: Patient
     return patient
 
 
-# --- staff / dashboard --------------------------------------------------------------
+# Staff / dashboard
 
 
 async def get_patient(db: AsyncSession, patient_id: uuid.UUID) -> Patient:

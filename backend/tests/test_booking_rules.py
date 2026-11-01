@@ -51,7 +51,7 @@ async def doctor(db, hospital):
     return await make_doctor(db, hospital)
 
 
-# --- booking ------------------------------------------------------------------------
+# Booking
 
 
 async def test_booking_returns_confirmation_with_token(db, doctor) -> None:
@@ -174,7 +174,7 @@ async def test_failed_booking_leaves_no_patient_behind(db, doctor) -> None:
     assert await db.scalar(select(func.count()).select_from(Patient)) == 0
 
 
-# --- cancellation -------------------------------------------------------------------
+# Cancellation
 
 
 async def test_cancel_requires_matching_phone(db, doctor) -> None:
@@ -212,7 +212,7 @@ async def test_cancel_unknown_appointment(db) -> None:
         await cancel_appointment(db, uuid.uuid4(), PHONE)
 
 
-# --- rescheduling -------------------------------------------------------------------
+# Rescheduling
 
 
 async def test_reschedule_moves_booking_and_links_rows(db, doctor) -> None:
@@ -268,7 +268,7 @@ async def test_staff_reschedule(db, doctor) -> None:
     assert row.booking_source == BookingSource.DASHBOARD
 
 
-# --- caller lookup ------------------------------------------------------------------
+# Caller lookup
 
 
 async def test_get_patient_appointments_requires_name_and_phone(db, doctor) -> None:

@@ -216,7 +216,6 @@ export function DoctorFormDialog({
         )}
 
         <form onSubmit={handleSubmit} className="space-y-4 pt-1">
-          {/* Row 1: Name & Qualification */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div className="sm:col-span-2 space-y-1.5">
               <Label htmlFor="doc-name" className="text-xs font-semibold">
@@ -245,7 +244,6 @@ export function DoctorFormDialog({
             </div>
           </div>
 
-          {/* Row 2: Speciality & Department */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div className="space-y-1.5">
               <Label htmlFor="doc-speciality" className="text-xs font-semibold">
@@ -281,7 +279,6 @@ export function DoctorFormDialog({
             </div>
           </div>
 
-          {/* Row 3: Available Days Checkbox Grid */}
           <div className="space-y-2 pt-1 border-t border-border">
             <div className="flex items-center justify-between">
               <Label className="text-xs font-semibold flex items-center gap-1.5">
@@ -329,7 +326,6 @@ export function DoctorFormDialog({
             </div>
           </div>
 
-          {/* Row 4: Shift Hours & Capacity */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-1 border-t border-border">
             <div className="space-y-1.5">
               <Label htmlFor="start-time" className="text-xs font-semibold flex items-center gap-1">
@@ -404,7 +400,6 @@ export function DoctorFormDialog({
             </div>
           </div>
 
-          {/* Row 5: Bio (Optional) */}
           <div className="space-y-1.5 pt-1">
             <Label htmlFor="doc-bio" className="text-xs font-semibold">
               Doctor Bio / Notes (Optional)

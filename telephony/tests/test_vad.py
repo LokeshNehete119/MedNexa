@@ -7,7 +7,7 @@ import pytest
 
 from telephony.vad import FRAME_BYTES, FRAME_SAMPLES, SileroVAD
 
-# ── helpers ───────────────────────────────────────────────────────────────────
+# helpers
 
 
 def make_silence(n_frames: int = 10) -> bytes:
@@ -23,7 +23,7 @@ def make_tone(frequency_hz: float = 440.0, n_frames: int = 20) -> bytes:
     return samples.tobytes()
 
 
-# ── unit tests ────────────────────────────────────────────────────────────────
+# unit tests
 
 
 class TestVadHelpers:

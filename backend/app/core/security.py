@@ -1,4 +1,4 @@
-"""Security & JWT authentication utilities (Part 5 - Task 5.3).
+"""Staff sign-in tokens and password hashing.
 
 HS256 JSON Web Tokens and PBKDF2 password hashing, built on the standard library
 only. There are deliberately no fallback secrets here: signing and verifying

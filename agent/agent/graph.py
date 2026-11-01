@@ -1,4 +1,4 @@
-"""LangGraph agent graph (task 2.5).
+"""The LangGraph agent graph.
 
     START -> agent --(tool calls)--> tools -> agent ...
                  \\--(final text)---> guardrail -> END

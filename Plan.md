@@ -911,15 +911,15 @@ Web-based admin dashboard where hospital staff manage doctors, schedules, appoin
 ┌─────────────────────────────────────────────────────────┐
 │  MedNexa Admin                         [Dr. Admin ▾]    │
 ├──────────┬──────────────────────────────────────────────┤
-│          │  📊 Today's Overview          Oct 25, 2026   │
-│ 🏠 Home  │  ┌──────┐ ┌──────┐ ┌──────┐ ┌──────┐       │
-│ 👨‍⚕️ Doctors│  │  24  │ │  18  │ │   3  │ │   6  │       │
-│ 📅 Appts │  │Total │ │Booked│ │Cancel│ │ Open │       │
-│ 👤 Patients│ └──────┘ └──────┘ └──────┘ └──────┘       │
-│ ℹ️ Info   │                                             │
-│ 📞 Calls │  Upcoming Appointments                       │
-│ ⚙️ Settings│ ┌─────────────────────────────────────┐    │
-│ 📈 Analytics│ │ 10:00  Dr. Sharma  Rahul K.  Booked │    │
+│          │  Today's Overview          Oct 25, 2026   │
+│ Home  │  ┌──────┐ ┌──────┐ ┌──────┐ ┌──────┐       │
+│ ‍Doctors│  │  24  │ │  18  │ │   3  │ │   6  │       │
+│ Appts │  │Total │ │Booked│ │Cancel│ │ Open │       │
+│ Patients│ └──────┘ └──────┘ └──────┘ └──────┘       │
+│ ℹ Info   │                                             │
+│ Calls │  Upcoming Appointments                       │
+│ Settings│ ┌─────────────────────────────────────┐    │
+│ Analytics│ │ 10:00  Dr. Sharma  Rahul K.  Booked │    │
 │          │  │ 10:30  Dr. Patel   Priya S.   Booked │    │
 │          │  │ 11:00  Dr. Sharma  —           Open   │    │
 │          │  └─────────────────────────────────────┘     │

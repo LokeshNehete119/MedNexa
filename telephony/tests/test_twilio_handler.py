@@ -44,7 +44,7 @@ def stream_token_from(twiml: str) -> str:
     return match.group(1)
 
 
-# ── webhook ───────────────────────────────────────────────────────────────────
+# webhook
 
 
 def test_unsigned_webhook_is_refused(client: TestClient) -> None:
@@ -77,7 +77,7 @@ def test_webhook_is_open_when_no_auth_token_is_configured(
     assert client.post("/twilio/voice", data=FORM).status_code == 200
 
 
-# ── media stream ──────────────────────────────────────────────────────────────
+# media stream
 
 
 @pytest.fixture()
@@ -156,7 +156,7 @@ def test_token_is_bound_to_its_call(
     fake_pipeline.assert_not_called()
 
 
-# ── transfer to staff ─────────────────────────────────────────────────────────
+# transfer to staff
 
 
 def test_transfer_redirects_the_call_to_the_staff_number(monkeypatch: pytest.MonkeyPatch) -> None:

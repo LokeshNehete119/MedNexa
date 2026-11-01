@@ -41,7 +41,7 @@ def _at(d: date, t: time) -> datetime:
 EARLY = _at(MONDAY - timedelta(days=3), time(8))  # a "now" well before MONDAY
 
 
-# --- pure planning ------------------------------------------------------------------
+# Pure planning
 
 
 def test_template_day_gives_full_grid() -> None:
@@ -98,7 +98,7 @@ def test_past_date_has_no_slots() -> None:
     assert plan_day(_doctor(), MONDAY, None, {}, now).free_slots() == []
 
 
-# --- database-backed ----------------------------------------------------------------
+# Database-backed
 
 
 async def test_cancelled_appointment_frees_the_slot(db) -> None:

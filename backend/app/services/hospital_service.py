@@ -23,7 +23,7 @@ _STOPWORDS = {
 }  # fmt: skip
 
 
-# --- hospitals ----------------------------------------------------------------------
+# Hospitals
 
 
 async def get_hospital(db: AsyncSession, hospital_id: uuid.UUID) -> Hospital:
@@ -59,7 +59,7 @@ async def update_hospital(
     return hospital
 
 
-# --- hospital info (FAQ entries) ----------------------------------------------------
+# Hospital info (FAQ entries)
 
 
 async def _get_info(db: AsyncSession, info_id: uuid.UUID) -> HospitalInfo:
