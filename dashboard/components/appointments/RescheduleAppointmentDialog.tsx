@@ -119,17 +119,10 @@ export function RescheduleAppointmentDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-lg bg-amber-500/10 text-amber-600 flex items-center justify-center">
-              <RefreshCw className="w-4 h-4" />
-            </div>
-            <div>
-              <DialogTitle className="text-base font-bold">Reschedule Appointment</DialogTitle>
-              <DialogDescription className="text-xs">
-                Select a new appointment date and time for {appointment.patient_name}.
-              </DialogDescription>
-            </div>
-          </div>
+          <DialogTitle>Reschedule appointment</DialogTitle>
+          <DialogDescription>
+            Pick a new date and time for {appointment.patient_name}. The current slot is released.
+          </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4 py-2">
@@ -180,7 +173,7 @@ export function RescheduleAppointmentDialog({
               </div>
             ) : slots.length === 0 ? (
               <div className="text-center p-4 border border-dashed border-border rounded-lg text-muted-foreground space-y-1">
-                <AlertCircle className="w-5 h-5 mx-auto text-amber-500" />
+                <AlertCircle className="w-5 h-5 mx-auto text-status-moved" />
                 <p className="text-xs font-medium text-foreground">No available slots for this date</p>
                 <p className="text-[11px]">Please select another date on the doctor&apos;s working calendar.</p>
               </div>
@@ -224,7 +217,7 @@ export function RescheduleAppointmentDialog({
             size="sm"
             onClick={handleReschedule}
             disabled={!newDate || !newSlot || isSubmitting}
-            className="gap-1.5 cursor-pointer bg-amber-600 hover:bg-amber-700 text-white"
+            className="gap-1.5"
           >
             {isSubmitting ? (
               <>

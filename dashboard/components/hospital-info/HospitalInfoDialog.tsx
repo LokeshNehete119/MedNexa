@@ -22,7 +22,7 @@ import {
 } from "@/lib/api";
 import { useHospital } from "@/contexts/HospitalContext";
 import { toast } from "sonner";
-import { Bot, HelpCircle, AlertCircle } from "lucide-react";
+import { AlertCircle } from "lucide-react";
 
 interface HospitalInfoDialogProps {
   open: boolean;
@@ -122,16 +122,11 @@ export function HospitalInfoDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
-          <div className="flex items-center gap-2 text-amber-600 dark:text-amber-400">
-            <Bot className="w-5 h-5" />
-            <DialogTitle className="text-lg font-bold">
-              {isEditing ? "Edit AI Knowledge Entry" : "Add AI Knowledge Entry"}
-            </DialogTitle>
-          </div>
+          <DialogTitle>{isEditing ? "Edit answer" : "Add answer"}</DialogTitle>
           <DialogDescription className="text-xs text-muted-foreground">
             {isEditing
-              ? "Modify the question or answer. The AI receptionist will immediately update its answers on incoming calls."
-              : "Add hospital guidelines, OPD timings, directions, or parking rules that the AI receptionist reads to answer caller queries."}
+              ? "The receptionist uses the new wording from the next call."
+              : "Write the answer the way staff would say it on the phone. The receptionist uses it from the next call."}
           </DialogDescription>
         </DialogHeader>
 
@@ -218,7 +213,7 @@ export function HospitalInfoDialog({
               type="submit"
               size="sm"
               disabled={isSubmitting}
-              className="text-xs h-9 bg-blue-600 hover:bg-blue-700 text-white font-medium cursor-pointer"
+              className="h-9"
             >
               {isSubmitting
                 ? "Saving..."

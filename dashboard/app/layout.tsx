@@ -4,8 +4,8 @@ import { Toaster } from "sonner";
 import { Providers } from "@/components/providers";
 
 export const metadata: Metadata = {
-  title: "MedNexa Admin — Hospital Management Dashboard",
-  description: "AI Receptionist & Hospital Admin Platform",
+  title: "MedNexa front desk",
+  description: "Appointments, doctors and the AI receptionist for your hospital",
 };
 
 export default function RootLayout({
@@ -18,7 +18,7 @@ export default function RootLayout({
       <body>
         <Providers>
           {children}
-          <Toaster position="top-right" richColors />
+          <Toaster position="bottom-right" />
         </Providers>
       </body>
     </html>

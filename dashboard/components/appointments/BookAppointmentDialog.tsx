@@ -23,30 +23,20 @@ import {
   type SlotOut,
   type BookingConfirmation,
   type Gender,
+  type PatientOut,
 } from "@/lib/api";
 import { toast } from "sonner";
 import { useHospital } from "@/contexts/HospitalContext";
 import { todayIn } from "@/lib/dates";
-import {
-  Calendar,
-  Clock,
-  User,
-  Phone,
-  CheckCircle2,
-  Stethoscope,
-  ChevronRight,
-  ChevronLeft,
-  Loader2,
-  AlertCircle,
-  FileText,
-  Hash,
-} from "lucide-react";
+import { Calendar, Clock, User, Phone, CheckCircle2, Stethoscope, ChevronRight, ChevronLeft, Loader2, AlertCircle, FileText } from "lucide-react";
 
 interface BookAppointmentDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   defaultDate?: string;
   defaultDoctorId?: string;
+  /** Pre-fills step 2 when booking for a patient who is already registered. */
+  defaultPatient?: Pick<PatientOut, "name" | "phone" | "age" | "gender" | "email">;
   onSuccess: () => void;
 }
 
@@ -55,6 +45,7 @@ export function BookAppointmentDialog({
   onOpenChange,
   defaultDate,
   defaultDoctorId,
+  defaultPatient,
   onSuccess,
 }: BookAppointmentDialogProps) {
   const [step, setStep] = React.useState<1 | 2 | 3 | 4>(1);
@@ -92,11 +83,11 @@ export function BookAppointmentDialog({
       setSelectedDoctorId(defaultDoctorId || "");
       setSelectedDate(defaultDate || today);
       setSelectedSlot("");
-      setPatientName("");
-      setPatientPhone("+91");
-      setPatientAge("");
-      setPatientGender("");
-      setPatientEmail("");
+      setPatientName(defaultPatient?.name ?? "");
+      setPatientPhone(defaultPatient?.phone ?? "+91");
+      setPatientAge(defaultPatient?.age != null ? String(defaultPatient.age) : "");
+      setPatientGender(defaultPatient?.gender ?? "");
+      setPatientEmail(defaultPatient?.email ?? "");
       setNotes("");
 
       async function fetchDoctors() {
@@ -120,7 +111,7 @@ export function BookAppointmentDialog({
       }
       fetchDoctors();
     }
-  }, [open, defaultDate, defaultDoctorId, hospitalId, today]);
+  }, [open, defaultDate, defaultDoctorId, defaultPatient, hospitalId, today]);
 
   // Load slots when doctor or date changes
   React.useEffect(() => {
@@ -218,18 +209,13 @@ export function BookAppointmentDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-lg bg-emerald-500/10 text-emerald-600 flex items-center justify-center">
-              <Calendar className="w-4 h-4" />
-            </div>
+          <div>
             <div>
-              <DialogTitle className="text-lg font-bold">
-                {step === 4 ? "Appointment Confirmed" : "Book New Patient Appointment"}
-              </DialogTitle>
-              <DialogDescription className="text-xs">
-                {step === 1 && "Step 1 of 3: Select Doctor, Appointment Date & Available Slot"}
-                {step === 2 && "Step 2 of 3: Enter Patient Details & Clinical Reason"}
-                {step === 3 && "Step 3 of 3: Review Details & Issue Token"}
+              <DialogTitle>{step === 4 ? "Appointment booked" : "Book appointment"}</DialogTitle>
+              <DialogDescription>
+                {step === 1 && "Step 1 of 3: doctor, date and time"}
+                {step === 2 && "Step 2 of 3: patient details"}
+                {step === 3 && "Step 3 of 3: check and book"}
                 {step === 4 && "Booking completed and confirmed in hospital records"}
               </DialogDescription>
             </div>
@@ -356,7 +342,7 @@ export function BookAppointmentDialog({
                 </div>
               ) : slots.length === 0 ? (
                 <div className="text-center p-6 border border-dashed border-border rounded-lg text-muted-foreground space-y-1">
-                  <AlertCircle className="w-6 h-6 mx-auto text-amber-500" />
+                  <AlertCircle className="w-6 h-6 mx-auto text-status-moved" />
                   <p className="text-xs font-medium text-foreground">No available slots for this date</p>
                   <p className="text-[11px]">
                     The doctor may not be scheduled on this day, or all appointments are booked. Try selecting another date.
@@ -485,7 +471,7 @@ export function BookAppointmentDialog({
         {step === 3 && (
           <div className="space-y-4 py-2">
             <Card className="p-4 space-y-3 bg-muted/20 border-border">
-              <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
+              <h4 className="text-[13px] font-medium text-muted-foreground">
                 Appointment Summary
               </h4>
 
@@ -523,33 +509,20 @@ export function BookAppointmentDialog({
               )}
             </Card>
 
-            <div className="p-3 bg-emerald-500/10 border border-emerald-500/30 rounded-lg text-emerald-800 dark:text-emerald-300 text-xs flex items-center gap-2">
-              <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-600" />
-              <span>
-                Confirming will issue a sequential token number for this doctor&apos;s daily OPD schedule.
-              </span>
-            </div>
+            <p className="text-[13px] text-muted-foreground">
+              Booking gives the patient the next token number in this doctor&apos;s queue for the day.
+            </p>
           </div>
         )}
 
         {/* STEP 4: Confirmation Screen */}
         {step === 4 && confirmation && (
-          <div className="py-6 text-center space-y-4">
-            <div className="w-16 h-16 rounded-full bg-emerald-500/10 text-emerald-600 flex items-center justify-center mx-auto">
-              <CheckCircle2 className="w-8 h-8" />
-            </div>
-
+          <div className="py-4 text-center space-y-4">
             <div>
-              <h3 className="text-xl font-bold text-foreground">Appointment Confirmed!</h3>
-              <p className="text-sm text-muted-foreground">The token has been assigned and recorded in the database.</p>
-            </div>
-
-            <div className="inline-flex flex-col items-center justify-center p-4 rounded-2xl bg-primary/10 border border-primary/20 min-w-[200px]">
-              <span className="text-xs uppercase tracking-wider font-semibold text-primary">Token Number</span>
-              <span className="text-4xl font-extrabold text-primary flex items-center gap-1 mt-1">
-                <Hash className="w-6 h-6" />
+              <p className="text-[13px] text-muted-foreground">Token</p>
+              <p className="tabular text-6xl leading-none font-semibold tracking-tight">
                 {confirmation.token_number}
-              </span>
+              </p>
             </div>
 
             <Card className="max-w-md mx-auto p-4 text-xs text-left space-y-2 bg-card">
@@ -619,7 +592,7 @@ export function BookAppointmentDialog({
                   size="sm"
                   onClick={handleConfirmBooking}
                   disabled={isSubmitting}
-                  className="gap-2 cursor-pointer bg-emerald-600 hover:bg-emerald-700 text-white"
+                  className="gap-2"
                 >
                   {isSubmitting ? (
                     <>

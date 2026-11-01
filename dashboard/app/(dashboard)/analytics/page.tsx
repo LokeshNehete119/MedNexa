@@ -1,579 +1,298 @@
 "use client";
 
 import * as React from "react";
-import {
-  listAppointments,
-  listDoctors,
-  listCalls,
-  fetchAllPages,
-  type AppointmentOut,
-  type DoctorOut,
-} from "@/lib/api";
-import { useHospital } from "@/contexts/HospitalContext";
-import { addDays, todayIn } from "@/lib/dates";
+import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { toast } from "sonner";
 import {
-  ResponsiveContainer,
-  BarChart,
-  Bar,
-  LineChart,
-  Line,
-  PieChart,
-  Pie,
-  Cell,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  Legend,
-} from "recharts";
-import {
-  TrendingUp,
-  BarChart3,
-  PieChart as PieChartIcon,
-  Calendar,
-  Clock,
-  UserCheck,
-  PhoneCall,
-  RefreshCw,
-  AlertCircle,
-  Filter,
-  CheckCircle2,
-  Ban,
-  Activity,
-  Bot,
-} from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
-import { Card } from "@/components/ui/card";
+  fetchAllPages,
+  listAppointments,
+  listCalls,
+  type AppointmentOut,
+  type AppointmentStatus,
+} from "@/lib/api";
+import { useHospital } from "@/contexts/HospitalContext";
+import { addDays, isoWeekday, todayIn } from "@/lib/dates";
+import { formatDate } from "@/lib/format";
+import { WEEKDAYS } from "@/lib/weekdays";
+import { PageHeader, StatStrip } from "@/components/page-header";
+import { APPOINTMENT_STATUS_LABELS } from "@/components/status";
+import { cn } from "@/lib/utils";
 
-const STATUS_COLORS: Record<string, string> = {
-  BOOKED: "#10b981", // Emerald 500
-  CANCELLED: "#ef4444", // Red 500
-  COMPLETED: "#3b82f6", // Blue 500
-  RESCHEDULED: "#f59e0b", // Amber 500
-  NO_SHOW: "#64748b", // Slate 500
+type Range = "7" | "30" | "next30" | "90";
+const RANGES: { value: Range; label: string }[] = [
+  { value: "7", label: "Last 7 days" },
+  { value: "30", label: "Last 30 days" },
+  { value: "90", label: "Last 90 days" },
+  { value: "next30", label: "Next 30 days" },
+];
+
+const STATUS_TONE: Record<AppointmentStatus, string> = {
+  BOOKED: "bg-status-booked",
+  COMPLETED: "bg-status-done",
+  CANCELLED: "bg-status-cancelled",
+  RESCHEDULED: "bg-status-moved",
+  NO_SHOW: "bg-status-moved",
 };
 
-const DAYS_OF_WEEK = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+const percent = (part: number, whole: number) => (whole ? `${Math.round((part / whole) * 100)}%` : "–");
+
+function hourLabel(hour: number) {
+  return `${hour % 12 || 12} ${hour >= 12 ? "PM" : "AM"}`;
+}
+
+/** One series of bars in the brand green, with a hover tooltip and a hidden table for screen readers. */
+function BarPanel({
+  title,
+  description,
+  data,
+  unit,
+}: {
+  title: string;
+  description: string;
+  data: { label: string; value: number }[];
+  unit: string;
+}) {
+  return (
+    <section className="rounded-lg border border-border bg-card">
+      <header className="border-b border-border px-4 py-3">
+        <h2 className="text-[15px] font-semibold">{title}</h2>
+        <p className="text-[13px] text-muted-foreground">{description}</p>
+      </header>
+      <div className="h-56 px-2 pt-4 pb-2" aria-hidden>
+        <ResponsiveContainer width="100%" height="100%">
+          <BarChart data={data} margin={{ top: 4, right: 8, left: -16, bottom: 0 }} barCategoryGap={6}>
+            <CartesianGrid vertical={false} stroke="var(--border)" />
+            <XAxis
+              dataKey="label"
+              tickLine={false}
+              axisLine={{ stroke: "var(--border)" }}
+              tick={{ fontSize: 12, fill: "var(--muted-foreground)" }}
+              interval="preserveStartEnd"
+            />
+            <YAxis
+              allowDecimals={false}
+              tickLine={false}
+              axisLine={false}
+              tick={{ fontSize: 12, fill: "var(--muted-foreground)" }}
+            />
+            <Tooltip
+              cursor={{ fill: "var(--muted)" }}
+              formatter={(value) => [`${value} ${unit}`, ""]}
+              separator=""
+              contentStyle={{
+                background: "var(--popover)",
+                border: "1px solid var(--border)",
+                borderRadius: 6,
+                fontSize: 13,
+                color: "var(--popover-foreground)",
+              }}
+              labelStyle={{ color: "var(--muted-foreground)" }}
+            />
+            <Bar dataKey="value" fill="var(--chart-1)" radius={[4, 4, 0, 0]} maxBarSize={36} />
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+      <table className="sr-only">
+        <caption>{title}</caption>
+        <tbody>
+          {data.map((d) => (
+            <tr key={d.label}>
+              <th scope="row">{d.label}</th>
+              <td>
+                {d.value} {unit}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </section>
+  );
+}
+
+/** Labelled horizontal bars as plain HTML: the label and count are always visible. */
+function BarList({
+  title,
+  rows,
+}: {
+  title: string;
+  rows: { key: string; label: React.ReactNode; value: number; tone?: string }[];
+}) {
+  const max = Math.max(1, ...rows.map((r) => r.value));
+  return (
+    <section className="rounded-lg border border-border bg-card">
+      <h2 className="border-b border-border px-4 py-3 text-[15px] font-semibold">{title}</h2>
+      {rows.length === 0 ? (
+        <p className="px-4 py-6 text-sm text-muted-foreground">No appointments in this period.</p>
+      ) : (
+        <ul className="space-y-3 px-4 py-4">
+          {rows.map((row) => (
+            <li key={row.key} className="grid grid-cols-[minmax(0,11rem)_1fr_2.5rem] items-center gap-3 text-sm">
+              <span className="truncate">{row.label}</span>
+              <span className="h-2 rounded-full bg-muted">
+                <span
+                  className={cn("block h-2 rounded-full", row.tone ?? "bg-chart-1")}
+                  style={{ width: `${(row.value / max) * 100}%` }}
+                />
+              </span>
+              <span className="tabular text-right text-muted-foreground">{row.value}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
 
 export default function AnalyticsPage() {
   const { hospitalId, hospital } = useHospital();
-
-  const [dateRangePreset, setDateRangePreset] = React.useState<string>("all");
-  const [dateFrom, setDateFrom] = React.useState<string>("");
-  const [dateTo, setDateTo] = React.useState<string>("");
-
+  const today = todayIn(hospital?.timezone);
+  const [range, setRange] = React.useState<Range>("30");
   const [appointments, setAppointments] = React.useState<AppointmentOut[]>([]);
-  const [doctors, setDoctors] = React.useState<DoctorOut[]>([]);
-  const [isLoading, setIsLoading] = React.useState(true);
   const [truncated, setTruncated] = React.useState(false);
-  const [totalCalls, setTotalCalls] = React.useState(0);
+  const [calls, setCalls] = React.useState({ total: 0, escalated: 0 });
+  const [loading, setLoading] = React.useState(true);
 
-  // Quick preset dates (relative to today in the hospital's timezone)
-  const handlePresetChange = (preset: string) => {
-    setDateRangePreset(preset);
-    const today = todayIn(hospital?.timezone);
-    if (preset === "7days") {
-      setDateFrom(addDays(today, -7));
-      setDateTo(today);
-    } else if (preset === "30days") {
-      setDateFrom(addDays(today, -30));
-      setDateTo(today);
-    } else if (preset === "next30") {
-      setDateFrom(today);
-      setDateTo(addDays(today, 30));
-    } else if (preset === "all") {
-      setDateFrom("");
-      setDateTo("");
-    }
-  };
-
-  const fetchData = React.useCallback(async () => {
-    if (!hospitalId) return; // never aggregate across hospitals while the hospital is loading
-    setIsLoading(true);
-    try {
-      const [aptRes, docRes, callRes] = await Promise.all([
-        fetchAllPages((limit, offset) =>
-          listAppointments({
-            hospital_id: hospitalId,
-            date_from: dateFrom || undefined,
-            date_to: dateTo || undefined,
-            limit,
-            offset,
-          })
-        ),
-        listDoctors({ hospital_id: hospitalId, limit: 200 }),
-        listCalls({ hospital_id: hospitalId, limit: 1 }),
-      ]);
-
-      setAppointments(aptRes.items);
-      setTruncated(aptRes.truncated);
-      setDoctors(docRes.items);
-      setTotalCalls(callRes.total);
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Failed to load analytics";
-      toast.error(msg);
-    } finally {
-      setIsLoading(false);
-    }
-  }, [hospitalId, dateFrom, dateTo]);
+  const [from, to] =
+    range === "next30" ? [today, addDays(today, 30)] : [addDays(today, -Number(range)), today];
 
   React.useEffect(() => {
-    fetchData();
-  }, [fetchData]);
-
-  // 1. Chart Data: Appointments by Day of Week
-  const dayOfWeekData = React.useMemo(() => {
-    const counts: Record<string, number> = {
-      Mon: 0,
-      Tue: 0,
-      Wed: 0,
-      Thu: 0,
-      Fri: 0,
-      Sat: 0,
-      Sun: 0,
-    };
-
-    appointments.forEach((apt) => {
+    if (!hospitalId) return;
+    let cancelled = false;
+    // Calls are timestamps: the range covers whole days in the browser's time zone.
+    const started_after = new Date(`${from}T00:00:00`).toISOString();
+    const started_before = new Date(`${addDays(to, 1)}T00:00:00`).toISOString();
+    (async () => {
       try {
-        const d = new Date(apt.appointment_date + "T00:00:00");
-        const dayIdx = d.getDay(); // 0=Sun, 1=Mon, ..., 6=Sat
-        const dayName = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][dayIdx];
-        if (counts[dayName] !== undefined) {
-          counts[dayName]++;
-        }
-      } catch {}
-    });
-
-    return DAYS_OF_WEEK.map((day) => ({
-      day,
-      appointments: counts[day] || 0,
-    }));
-  }, [appointments]);
-
-  // 2. Chart Data: Status Breakdown
-  const statusPieData = React.useMemo(() => {
-    const map: Record<string, number> = {};
-    appointments.forEach((apt) => {
-      map[apt.status] = (map[apt.status] || 0) + 1;
-    });
-
-    const list = Object.keys(map).map((status) => ({
-      name: status,
-      value: map[status],
-      color: STATUS_COLORS[status] || "#94a3b8",
-    }));
-
-    // If empty, return placeholder item so chart doesn't break
-    if (list.length === 0) {
-      return [{ name: "No Bookings", value: 1, color: "#cbd5e1" }];
-    }
-    return list;
-  }, [appointments]);
-
-  // 3. Chart Data: Top 5 Doctors by Bookings
-  const topDoctorsData = React.useMemo(() => {
-    const map: Record<string, { name: string; count: number; department: string }> = {};
-
-    appointments.forEach((apt) => {
-      if (!map[apt.doctor_id]) {
-        map[apt.doctor_id] = {
-          name: apt.doctor_name,
-          count: 0,
-          department: apt.department,
-        };
+        const [appts, allCalls, escalated] = await Promise.all([
+          fetchAllPages((limit, offset) =>
+            listAppointments({ hospital_id: hospitalId, date_from: from, date_to: to, limit, offset })
+          ),
+          listCalls({ hospital_id: hospitalId, started_after, started_before, limit: 1 }),
+          listCalls({ hospital_id: hospitalId, started_after, started_before, escalated: true, limit: 1 }),
+        ]);
+        if (cancelled) return;
+        setAppointments(appts.items);
+        setTruncated(appts.truncated);
+        setCalls({ total: allCalls.total, escalated: escalated.total });
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "Analytics could not be loaded.");
+      } finally {
+        if (!cancelled) setLoading(false);
       }
-      map[apt.doctor_id].count++;
-    });
-
-    return Object.values(map)
-      .sort((a, b) => b.count - a.count)
-      .slice(0, 5)
-      .map((d) => ({
-        name: d.name.replace(/^Dr\.\s+/, ""), // cleaner label on chart
-        bookings: d.count,
-        department: d.department,
-      }));
-  }, [appointments]);
-
-  // 4. Chart Data: Peak Booking Hours
-  const hourlyData = React.useMemo(() => {
-    const hoursMap: Record<number, number> = {
-      9: 0,
-      10: 0,
-      11: 0,
-      12: 0,
-      13: 0,
-      14: 0,
-      15: 0,
-      16: 0,
-      17: 0,
-      18: 0,
-      19: 0,
+    })();
+    return () => {
+      cancelled = true;
     };
+  }, [hospitalId, from, to]);
 
-    appointments.forEach((apt) => {
-      try {
-        const hour = parseInt(apt.appointment_time.split(":")[0], 10);
-        if (hoursMap[hour] !== undefined) {
-          hoursMap[hour]++;
-        }
-      } catch {}
-    });
+  const kept = appointments.filter((a) => a.status !== "RESCHEDULED"); // a reschedule isn't a second visit
+  const byPhone = kept.filter((a) => a.booking_source === "AI_CALL").length;
+  const cancelled = kept.filter((a) => a.status === "CANCELLED").length;
+  const visits = kept.filter((a) => a.status !== "CANCELLED");
 
-    return Object.keys(hoursMap).map((h) => {
-      const hr = parseInt(h, 10);
-      const label = hr >= 12 ? `${hr === 12 ? 12 : hr - 12} PM` : `${hr} AM`;
-      return {
-        hour: label,
-        appointments: hoursMap[hr],
-      };
-    });
-  }, [appointments]);
+  const weekdayData = WEEKDAYS.map((w) => ({
+    label: w.short,
+    value: visits.filter((a) => isoWeekday(a.appointment_date) === w.day).length,
+  }));
 
-  // High-level KPI metrics
-  const totalAppointments = appointments.length;
-  const bookedAppointments = appointments.filter((a) => a.status === "BOOKED").length;
-  const cancelledAppointments = appointments.filter((a) => a.status === "CANCELLED").length;
-  const bookingRate = totalAppointments > 0 ? Math.round((bookedAppointments / totalAppointments) * 100) : 0;
-  const aiCallsTotal = totalCalls;
+  const hours = visits.map((a) => Number(a.appointment_time.slice(0, 2)));
+  const hourData =
+    hours.length === 0
+      ? []
+      : Array.from({ length: Math.max(...hours) - Math.min(...hours) + 1 }, (_, i) => {
+          const hour = Math.min(...hours) + i;
+          return { label: hourLabel(hour), value: hours.filter((h) => h === hour).length };
+        });
+
+  const perDoctor = new Map<string, { name: string; department: string; value: number }>();
+  for (const a of visits) {
+    const entry = perDoctor.get(a.doctor_id) ?? { name: a.doctor_name, department: a.department, value: 0 };
+    entry.value += 1;
+    perDoctor.set(a.doctor_id, entry);
+  }
+  const doctorRows = [...perDoctor.entries()]
+    .sort((a, b) => b[1].value - a[1].value)
+    .slice(0, 8)
+    .map(([id, d]) => ({ key: id, label: d.name, value: d.value }));
+
+  const statusRows = (Object.keys(APPOINTMENT_STATUS_LABELS) as AppointmentStatus[])
+    .map((status) => ({
+      key: status,
+      label: APPOINTMENT_STATUS_LABELS[status],
+      value: appointments.filter((a) => a.status === status).length,
+      tone: STATUS_TONE[status],
+    }))
+    .filter((row) => row.value > 0);
 
   return (
-    <div className="space-y-6">
-      {/* Top Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight text-foreground flex items-center gap-2">
-            <BarChart3 className="w-6 h-6 text-primary" />
-            Hospital Analytics &amp; Reports
-          </h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            Real-time appointment distributions, doctor workload breakdown, and patient booking trends.
-          </p>
-        </div>
+    <>
+      <PageHeader
+        title="Analytics"
+        description={`${formatDate(from)} to ${formatDate(to)}`}
+        actions={
+          <div className="flex rounded-md border border-border bg-card p-0.5 text-sm" role="group" aria-label="Period">
+            {RANGES.map((r) => (
+              <button
+                key={r.value}
+                type="button"
+                aria-pressed={range === r.value}
+                onClick={() => setRange(r.value)}
+                className={cn(
+                  "cursor-pointer rounded px-3 py-1",
+                  range === r.value ? "bg-accent font-medium text-accent-foreground" : "text-muted-foreground hover:text-foreground"
+                )}
+              >
+                {r.label}
+              </button>
+            ))}
+          </div>
+        }
+      />
 
-        <div className="flex items-center gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={fetchData}
-            className="gap-1.5 cursor-pointer text-xs"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? "animate-spin" : ""}`} />
-            <span>Refresh</span>
-          </Button>
-        </div>
-      </div>
-
-      {/* Date Filter Bar */}
       {truncated && (
-        <div className="p-3 rounded-lg border border-amber-500/40 bg-amber-500/10 text-amber-800 dark:text-amber-300 text-xs">
-          Showing the first {appointments.length} appointments in this window. Narrow the date
-          range for complete figures.
-        </div>
+        <p className="mb-4 text-sm text-status-moved">
+          Only the first 2,000 appointments in this period are counted. Pick a shorter period for exact figures.
+        </p>
       )}
 
-      <Card className="p-4 space-y-3 bg-card border-border">
-        <div className="flex flex-wrap items-center justify-between gap-3 text-xs">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="font-semibold text-muted-foreground flex items-center gap-1">
-              <Filter className="w-3.5 h-3.5" />
-              Time Window:
-            </span>
-            <button
-              type="button"
-              onClick={() => handlePresetChange("next30")}
-              className={`px-3 py-1.5 rounded-lg text-xs font-semibold cursor-pointer transition-colors ${
-                dateRangePreset === "next30"
-                  ? "bg-primary text-primary-foreground"
-                  : "bg-muted text-muted-foreground hover:bg-muted/80"
-              }`}
-            >
-              Next 30 Days
-            </button>
-            <button
-              type="button"
-              onClick={() => handlePresetChange("7days")}
-              className={`px-3 py-1.5 rounded-lg text-xs font-semibold cursor-pointer transition-colors ${
-                dateRangePreset === "7days"
-                  ? "bg-primary text-primary-foreground"
-                  : "bg-muted text-muted-foreground hover:bg-muted/80"
-              }`}
-            >
-              Last 7 Days
-            </button>
-            <button
-              type="button"
-              onClick={() => handlePresetChange("30days")}
-              className={`px-3 py-1.5 rounded-lg text-xs font-semibold cursor-pointer transition-colors ${
-                dateRangePreset === "30days"
-                  ? "bg-primary text-primary-foreground"
-                  : "bg-muted text-muted-foreground hover:bg-muted/80"
-              }`}
-            >
-              Last 30 Days
-            </button>
-            <button
-              type="button"
-              onClick={() => handlePresetChange("all")}
-              className={`px-3 py-1.5 rounded-lg text-xs font-semibold cursor-pointer transition-colors ${
-                dateRangePreset === "all"
-                  ? "bg-primary text-primary-foreground"
-                  : "bg-muted text-muted-foreground hover:bg-muted/80"
-              }`}
-            >
-              All Time
-            </button>
-          </div>
+      <StatStrip
+        items={[
+          { label: "Appointments", value: loading ? "–" : kept.length },
+          { label: "Booked by phone", value: loading ? "–" : byPhone, hint: !loading && percent(byPhone, kept.length) },
+          { label: "Cancelled", value: loading ? "–" : cancelled, hint: !loading && percent(cancelled, kept.length) },
+          { label: "Calls answered", value: loading ? "–" : calls.total },
+          {
+            label: "Passed to staff",
+            value: loading ? "–" : calls.escalated,
+            hint: !loading && percent(calls.escalated, calls.total),
+          },
+        ]}
+      />
 
-          <div className="flex items-center gap-2">
-            <span className="text-muted-foreground">From:</span>
-            <Input
-              type="date"
-              value={dateFrom}
-              onChange={(e) => {
-                setDateFrom(e.target.value);
-                setDateRangePreset("custom");
-              }}
-              className="h-8 w-34 text-xs"
-            />
-            <span className="text-muted-foreground">To:</span>
-            <Input
-              type="date"
-              value={dateTo}
-              onChange={(e) => {
-                setDateTo(e.target.value);
-                setDateRangePreset("custom");
-              }}
-              className="h-8 w-34 text-xs"
-            />
-          </div>
+      {loading ? (
+        <div className="grid gap-6 lg:grid-cols-2">
+          {[0, 1, 2, 3].map((i) => (
+            <div key={i} className="h-72 animate-pulse rounded-lg border border-border bg-card" />
+          ))}
         </div>
-      </Card>
-
-      {/* KPI Overview Cards */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-        <Card className="p-4 space-y-1 bg-card border-border">
-          <span className="text-xs text-muted-foreground font-medium block">Total Bookings</span>
-          <div className="flex items-center justify-between">
-            <span className="text-2xl font-bold text-foreground">{totalAppointments}</span>
-            <Activity className="w-5 h-5 text-primary opacity-80" />
-          </div>
-          <span className="text-[11px] text-muted-foreground block">in selected period</span>
-        </Card>
-
-        <Card className="p-4 space-y-1 bg-emerald-500/10 border-emerald-500/20">
-          <span className="text-xs text-emerald-800 dark:text-emerald-300 font-medium block">
-            Confirmed Bookings
-          </span>
-          <div className="flex items-center justify-between">
-            <span className="text-2xl font-bold text-emerald-700 dark:text-emerald-400">
-              {bookedAppointments}
-            </span>
-            <CheckCircle2 className="w-5 h-5 text-emerald-600" />
-          </div>
-          <span className="text-[11px] text-emerald-700 dark:text-emerald-400 block">
-            {bookingRate}% confirmation rate
-          </span>
-        </Card>
-
-        <Card className="p-4 space-y-1 bg-destructive/10 border-destructive/20">
-          <span className="text-xs text-destructive font-medium block">Cancellations</span>
-          <div className="flex items-center justify-between">
-            <span className="text-2xl font-bold text-destructive">{cancelledAppointments}</span>
-            <Ban className="w-5 h-5 text-destructive" />
-          </div>
-          <span className="text-[11px] text-destructive block">
-            {totalAppointments > 0
-              ? `${Math.round((cancelledAppointments / totalAppointments) * 100)}% cancel rate`
-              : "0%"}
-          </span>
-        </Card>
-
-        <Card className="p-4 space-y-1 bg-purple-500/10 border-purple-500/20">
-          <span className="text-xs text-purple-800 dark:text-purple-300 font-medium block">
-            AI Telephony Volume
-          </span>
-          <div className="flex items-center justify-between">
-            <span className="text-2xl font-bold text-purple-700 dark:text-purple-400">
-              {aiCallsTotal}
-            </span>
-            <Bot className="w-5 h-5 text-purple-600" />
-          </div>
-          <span className="text-[11px] text-purple-700 dark:text-purple-400 block">
-            calls handled by AI
-          </span>
-        </Card>
-      </div>
-
-      {/* Grid of Charts */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {/* Chart 1: Appointments per Day of Week */}
-        <Card className="p-5 border-border bg-card space-y-4">
-          <div className="flex items-center justify-between pb-2 border-b border-border/70">
-            <div className="flex items-center gap-2">
-              <BarChart3 className="w-4 h-4 text-primary" />
-              <h3 className="text-sm font-semibold text-foreground">
-                Bookings by Day of Week
-              </h3>
-            </div>
-            <Badge variant="outline" className="text-[10px]">
-              Mon–Sun
-            </Badge>
-          </div>
-
-          <div className="h-64 w-full text-xs">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={dayOfWeekData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
-                <XAxis dataKey="day" tick={{ fontSize: 11 }} />
-                <YAxis allowDecimals={false} tick={{ fontSize: 11 }} />
-                <Tooltip
-                  contentStyle={{
-                    backgroundColor: "hsl(var(--card))",
-                    borderColor: "hsl(var(--border))",
-                    borderRadius: "8px",
-                    fontSize: "12px",
-                  }}
-                />
-                <Bar dataKey="appointments" fill="var(--color-primary, #2563eb)" radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </Card>
-
-        {/* Chart 2: Appointment Status Breakdown Pie */}
-        <Card className="p-5 border-border bg-card space-y-4">
-          <div className="flex items-center justify-between pb-2 border-b border-border/70">
-            <div className="flex items-center gap-2">
-              <PieChartIcon className="w-4 h-4 text-primary" />
-              <h3 className="text-sm font-semibold text-foreground">
-                Appointment Status Breakdown
-              </h3>
-            </div>
-            <Badge variant="outline" className="text-[10px]">
-              Distribution
-            </Badge>
-          </div>
-
-          <div className="h-64 w-full text-xs flex items-center justify-center">
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie
-                  data={statusPieData}
-                  cx="50%"
-                  cy="50%"
-                  innerRadius={55}
-                  outerRadius={80}
-                  paddingAngle={4}
-                  dataKey="value"
-                >
-                  {statusPieData.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={entry.color} />
-                  ))}
-                </Pie>
-                <Tooltip
-                  contentStyle={{
-                    backgroundColor: "hsl(var(--card))",
-                    borderColor: "hsl(var(--border))",
-                    borderRadius: "8px",
-                    fontSize: "12px",
-                  }}
-                />
-                <Legend iconType="circle" wrapperStyle={{ fontSize: "11px" }} />
-              </PieChart>
-            </ResponsiveContainer>
-          </div>
-        </Card>
-
-        {/* Chart 3: Top 5 Doctors by Total Bookings */}
-        <Card className="p-5 border-border bg-card space-y-4">
-          <div className="flex items-center justify-between pb-2 border-b border-border/70">
-            <div className="flex items-center gap-2">
-              <UserCheck className="w-4 h-4 text-primary" />
-              <h3 className="text-sm font-semibold text-foreground">
-                Top Booked Doctors
-              </h3>
-            </div>
-            <Badge variant="outline" className="text-[10px]">
-              By Volume
-            </Badge>
-          </div>
-
-          <div className="h-64 w-full text-xs">
-            {topDoctorsData.length === 0 ? (
-              <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
-                <AlertCircle className="w-6 h-6 mb-1" />
-                <span>No doctor booking data available for this range</span>
-              </div>
-            ) : (
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart
-                  layout="vertical"
-                  data={topDoctorsData}
-                  margin={{ top: 10, right: 20, left: 30, bottom: 0 }}
-                >
-                  <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
-                  <XAxis type="number" allowDecimals={false} tick={{ fontSize: 11 }} />
-                  <YAxis type="category" dataKey="name" tick={{ fontSize: 11 }} width={90} />
-                  <Tooltip
-                    contentStyle={{
-                      backgroundColor: "hsl(var(--card))",
-                      borderColor: "hsl(var(--border))",
-                      borderRadius: "8px",
-                      fontSize: "12px",
-                    }}
-                  />
-                  <Bar dataKey="bookings" fill="#10b981" radius={[0, 4, 4, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            )}
-          </div>
-        </Card>
-
-        {/* Chart 4: Peak Booking Hours Distribution */}
-        <Card className="p-5 border-border bg-card space-y-4">
-          <div className="flex items-center justify-between pb-2 border-b border-border/70">
-            <div className="flex items-center gap-2">
-              <Clock className="w-4 h-4 text-primary" />
-              <h3 className="text-sm font-semibold text-foreground">
-                Peak OPD Booking Hours
-              </h3>
-            </div>
-            <Badge variant="outline" className="text-[10px]">
-              Daily Pattern
-            </Badge>
-          </div>
-
-          <div className="h-64 w-full text-xs">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={hourlyData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
-                <XAxis dataKey="hour" tick={{ fontSize: 11 }} />
-                <YAxis allowDecimals={false} tick={{ fontSize: 11 }} />
-                <Tooltip
-                  contentStyle={{
-                    backgroundColor: "hsl(var(--card))",
-                    borderColor: "hsl(var(--border))",
-                    borderRadius: "8px",
-                    fontSize: "12px",
-                  }}
-                />
-                <Line
-                  type="monotone"
-                  dataKey="appointments"
-                  stroke="#8b5cf6"
-                  strokeWidth={2.5}
-                  dot={{ r: 4, fill: "#8b5cf6" }}
-                  activeDot={{ r: 6 }}
-                />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
-        </Card>
-      </div>
-    </div>
+      ) : (
+        <div className="grid gap-6 lg:grid-cols-2">
+          <BarPanel
+            title="Busiest days"
+            description="Appointments by weekday, not counting cancellations"
+            data={weekdayData}
+            unit="appointments"
+          />
+          <BarPanel
+            title="Busiest hours"
+            description="Appointments by start time, not counting cancellations"
+            data={hourData}
+            unit="appointments"
+          />
+          <BarList title="Appointments per doctor" rows={doctorRows} />
+          <BarList title="How appointments ended up" rows={statusRows} />
+        </div>
+      )}
+    </>
   );
 }

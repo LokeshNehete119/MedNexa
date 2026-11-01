@@ -79,12 +79,15 @@ docker compose --profile demo run --rm seed
 1. **Sign in** at [http://localhost:3001](http://localhost:3001) with `MEDNEXA_ADMIN_EMAIL` / `MEDNEXA_ADMIN_PASSWORD`.
    Over plain HTTP from another machine, set `AUTH_COOKIE_SECURE=false` in `.env`
    (HTTPS through a reverse proxy is strongly preferred).
-2. **Telephony needs a hospital:** create it in the dashboard (or run the demo seed), copy its
-   id into `MEDNEXA_TEL_HOSPITAL_ID` in `.env`, then `docker compose up -d telephony`.
-   `http://localhost:8001/health` reports `hospital_configured` and `backend_connected`.
+2. **Telephony needs a hospital:** on a fresh install the dashboard asks for the hospital's
+   details first (or run the demo seed). Copy its id from Settings into `MEDNEXA_TEL_HOSPITAL_ID`
+   in `.env`, then `docker compose up -d telephony`. The dashboard sidebar shows whether the
+   phone line is answering (from `http://localhost:8001/health`).
 3. **Local model (optional):** `docker compose exec ollama ollama pull llama3.1:8b`.
 4. **Twilio:** set `MEDNEXA_TEL_PUBLIC_URL` and the Twilio credentials in `.env`; with an auth
-   token set, the webhook only accepts requests signed by Twilio.
+   token set, the webhook only accepts requests signed by Twilio. Set
+   `MEDNEXA_TEL_TRANSFER_PHONE_NUMBER` to a staff number: callers who ask for a person are
+   connected to it (without it, they are asked to call reception).
 
 Useful addresses: dashboard `http://localhost:3001`, API docs `http://localhost:8000/docs`,
 API health `http://localhost:8000/api/v1/health`, telephony health `http://localhost:8001/health`.
@@ -107,6 +110,9 @@ API health `http://localhost:8000/api/v1/health`, telephony health `http://local
 - **Network exposure:** only the dashboard (3001) and the telephony webhook (8001) listen on all
   interfaces; the API and database are bound to localhost and Ollama is internal.
 - `X-Correlation-ID` is echoed (if it is short and uses safe characters) for tracing across logs.
+- **Patient data in logs and storage:** phone numbers in telephony logs and in the API's access
+  log keep only their last 4 digits. Call transcripts are deleted after
+  `MEDNEXA_CALL_LOG_RETENTION_DAYS` (90 by default; 0 keeps them).
 
 ---
 

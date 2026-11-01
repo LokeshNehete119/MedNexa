@@ -62,6 +62,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:  # type: ignore[type-ar
             hint="set MEDNEXA_TEL_BACKEND_API_KEY (the backend's MEDNEXA_SERVICE_API_KEY); "
             "an authenticated backend rejects call logs without it",
         )
+    if cfg.twilio_auth_token and not cfg.transfer_phone_number:
+        log.warning(
+            "transfer_phone_number_not_set",
+            hint="set MEDNEXA_TEL_TRANSFER_PHONE_NUMBER so callers who ask for a person "
+            "are connected to staff (otherwise they are asked to call reception)",
+        )
 
     # Health-check backend
     async with BackendClient() as client:

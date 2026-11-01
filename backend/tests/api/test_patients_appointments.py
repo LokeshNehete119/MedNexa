@@ -123,6 +123,14 @@ async def test_appointment_listing_filters(client) -> None:
     assert (await query(status="BOOKED")).json()["total"] == 2
     assert (await query(date_from=MONDAY, date_to=MONDAY)).json()["total"] == 2
 
+    # q: patient name, phone digits or token number, across all pages
+    assert (await query(q="sita")).json()["total"] == 1
+    assert (await query(q="KUMAR")).json()["total"] == 3
+    assert (await query(q="432-10")).json()["total"] == 3
+    assert (await query(q="2")).json()["total"] == 1  # Sita's token
+    assert (await query(q="nobody")).json()["total"] == 0
+    assert (await query(q="%")).json()["total"] == 0  # wildcards are matched literally
+
     page = (await query(limit=1, offset=1)).json()
     assert page["total"] == 3 and len(page["items"]) == 1
     assert page["items"][0]["appointment_time"] == "09:30:00"

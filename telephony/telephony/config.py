@@ -33,6 +33,9 @@ class TelephonySettings(BaseSettings):
     twilio_account_sid: str = ""
     twilio_auth_token: str = ""
     twilio_phone_number: str = ""
+    transfer_phone_number: str = ""
+    """Staff number (E.164) that calls are connected to when the agent hands over to a
+    person. Empty = the caller is asked to call reception instead."""
 
     # ── STT (Faster-Whisper) ─────────────────────────────────────────────────
     whisper_model_size: str = "large-v3"

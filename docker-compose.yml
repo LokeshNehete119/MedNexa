@@ -82,6 +82,7 @@ services:
       MEDNEXA_ADMIN_PASSWORD: ${MEDNEXA_ADMIN_PASSWORD:?Set MEDNEXA_ADMIN_PASSWORD in .env}
       MEDNEXA_SERVICE_API_KEY: ${MEDNEXA_SERVICE_API_KEY:?Set MEDNEXA_SERVICE_API_KEY in .env (openssl rand -hex 32)}
       MEDNEXA_DEFAULT_COUNTRY_CODE: ${MEDNEXA_DEFAULT_COUNTRY_CODE:-91}
+      MEDNEXA_CALL_LOG_RETENTION_DAYS: ${MEDNEXA_CALL_LOG_RETENTION_DAYS:-90}
       # The dashboard passes each browser's address in X-Forwarded-For so sign-in is
       # throttled per person. Safe because the API is only reachable from this network
       # and localhost.
@@ -112,6 +113,8 @@ services:
     environment:
       # How the dashboard server reaches the API. Browsers only talk to the dashboard.
       BACKEND_URL: http://api:8000
+      # Only used to show whether the phone line is answering.
+      TELEPHONY_URL: http://telephony:8001
       # Cookies are Secure by default. Plain-HTTP access from other machines needs "false"
       # (HTTPS is strongly preferred); http://localhost works either way.
       AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-true}
@@ -149,6 +152,7 @@ services:
       MEDNEXA_TEL_TWILIO_ACCOUNT_SID: ${MEDNEXA_TEL_TWILIO_ACCOUNT_SID:-}
       MEDNEXA_TEL_TWILIO_AUTH_TOKEN: ${MEDNEXA_TEL_TWILIO_AUTH_TOKEN:-}
       MEDNEXA_TEL_TWILIO_PHONE_NUMBER: ${MEDNEXA_TEL_TWILIO_PHONE_NUMBER:-}
+      MEDNEXA_TEL_TRANSFER_PHONE_NUMBER: ${MEDNEXA_TEL_TRANSFER_PHONE_NUMBER:-}
       MEDNEXA_TEL_TTS_ENGINE: ${MEDNEXA_TEL_TTS_ENGINE:-edge}
       MEDNEXA_TEL_WHISPER_MODEL_SIZE: ${MEDNEXA_TEL_WHISPER_MODEL_SIZE:-base}
       MEDNEXA_TEL_WHISPER_DEVICE: ${MEDNEXA_TEL_WHISPER_DEVICE:-cpu}

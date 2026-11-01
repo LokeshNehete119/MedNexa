@@ -45,12 +45,20 @@ log = get_logger("pipeline")
 
 SendAudioFn = Callable[[bytes], Awaitable[None]]
 ClearAudioFn = Callable[[], Awaitable[None]]
+TransferFn = Callable[[], Awaitable[bool]]
 
 # Pipeline audio: 16 kHz mono int16 -> 32000 bytes per second of playback.
 PCM_BYTES_PER_SECOND = 16000 * 2
 
 # Closing phrases (Part 2's agent says these only in its final reply).
 _FAREWELL = re.compile(r"\bgood\s?-?bye\b|\bbye\b|अलविदा|धन्यवाद[\s,।!]*नमस्ते", re.IGNORECASE)
+
+# Said when the agent hands over to staff but the call can't be transferred.
+_NO_TRANSFER = {
+    "en": "I'm sorry, I can't connect you to our staff on this line. "
+    "Please call the hospital reception directly. Goodbye!",
+    "hi": "माफ़ कीजिए, इस लाइन पर स्टाफ़ से जोड़ना संभव नहीं है। कृपया अस्पताल के रिसेप्शन पर सीधे कॉल करें। नमस्ते!",
+}
 
 # Maximum buffer for one utterance (prevents runaway memory if VAD misses end)
 MAX_UTTERANCE_BYTES = 16000 * 2 * 30  # 30 seconds of 16 kHz int16
@@ -70,6 +78,9 @@ class CallPipeline:
     clear_audio:
         Optional async function that discards audio already queued on the
         caller's side (Twilio's "clear"), used when the caller barges in.
+    transfer:
+        Optional async function that connects the call to hospital staff when
+        the agent escalates; returns False if it could not.
     agent:
         MedNexaAgent or StubAgent instance.
     """
@@ -81,6 +92,7 @@ class CallPipeline:
         send_audio: SendAudioFn,
         *,
         clear_audio: ClearAudioFn | None = None,
+        transfer: TransferFn | None = None,
         agent: AgentInterface | None = None,
     ) -> None:
         cfg = get_settings()
@@ -88,6 +100,7 @@ class CallPipeline:
         self.caller_phone = caller_phone
         self._send_audio = send_audio
         self._clear_audio = clear_audio
+        self._transfer = transfer
         self._cfg = cfg
 
         # Core components
@@ -281,6 +294,18 @@ class CallPipeline:
         # Detect "goodbye" intent to end the call cleanly
         if self._is_farewell(response):
             self._call_active = False
+
+    async def _hand_over(self) -> None:
+        """The agent asked for a person: connect the caller to staff, or tell them how
+        to reach staff. Either way the AI's part of the call is over."""
+        self._call_active = False
+        # Let the caller hear the agent's "please stay on the line" before moving the call.
+        await asyncio.sleep(max(0.0, self._playback_until - time.monotonic()))
+        if self._transfer is not None and await self._transfer():
+            return
+        message = _NO_TRANSFER.get(self._language, _NO_TRANSFER["en"])
+        await self._speak(message)
+        await self._log("ASSISTANT", message)
 
     # ── TTS playback ──────────────────────────────────────────────────────────
 
