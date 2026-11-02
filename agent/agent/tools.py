@@ -21,7 +21,7 @@ from typing import Any
 
 from app.core.exceptions import DomainError, NotFound
 from app.core.timeutils import hospital_now
-from app.models import Appointment, BookingSource, Doctor, Hospital
+from app.models import Appointment, BookingSource, Doctor, Hospital, Patient
 from app.schemas.appointment import AppointmentOut, BookingRequest
 from app.schemas.patient import PatientIn
 from app.services import contracts
@@ -46,6 +46,35 @@ class ToolContext:
     now: Callable[[], datetime] | None = None  # override for tests
     events: CallEvents = field(default_factory=CallEvents)
     escalation_reason: str | None = None
+    # With confirm_changes, booking, cancelling, rescheduling and transferring need two tool
+    # calls. The first only checks: the receptionist then asks the caller, word for word
+    # (the graph replaces the model's reply with `readback`). The second goes ahead only if
+    # the caller's next message is a clear yes. The model cannot skip or fake either step.
+    confirm_changes: bool = False
+    last_caller_text: str = ""
+    turn: int = 0
+    pending_change: tuple[Any, ...] | None = None
+    pending_turn: int = -1
+    readback: str | None = None  # the question for the caller, set during this turn
+    readback_spoken: bool = False
+    done: tuple[str, dict[str, Any]] | None = None  # a change made this turn: (kind, result)
+
+    def confirmation_needed(self, change: tuple[Any, ...], readback: str) -> bool:
+        """True unless the caller has just said yes to a question about this exact change."""
+        if not self.confirm_changes:
+            return False
+        agreed = (
+            self.pending_change == change
+            and self.pending_turn < self.turn
+            and self.readback_spoken
+            and says_yes(self.last_caller_text)
+        )
+        if agreed:
+            self.pending_change = None
+            return False
+        self.pending_change, self.pending_turn = change, self.turn
+        self.readback, self.readback_spoken = readback, False
+        return True
 
     async def current_time(self, db: AsyncSession) -> datetime:
         if self.now is not None:
@@ -56,6 +85,64 @@ class ToolContext:
 
 class ToolInputError(ValueError):
     """An argument the LLM supplied could not be understood."""
+
+
+_YES = re.compile(
+    r"\b(yes|yeah|yep|yup|sure|okay|ok|correct|right|fine|good|great|perfect|confirm|confirmed|"
+    r"proceed|please do|go ahead|go for it|book it|do it|that works|sounds good|haan|han|ji|"
+    r"theek|thik)\b|हाँ|हां|जी|ठीक|कर दीजिए|कर दो|बुक कर",
+    re.I,
+)
+_NO = re.compile(
+    r"\b(no|nope|not|don't|dont|do not|wait|stop|hold on|change|instead|different|but|actually|"
+    r"never ?mind)\b|नहीं|नही|मत|रुक",
+    re.I,
+)
+
+
+def says_yes(text: str) -> bool:
+    """A clear yes, in English, Hindi or Hinglish; any no or "but" in it makes it not clear."""
+    return bool(_YES.search(text)) and not _NO.search(text)
+
+
+def _confirm_first(readback: str) -> dict[str, Any]:
+    """The result of the first, checking-only call of a change. The receptionist asks the
+    caller `readback` itself, whatever the model writes next."""
+    return {
+        "ok": False,
+        "error": "needs_confirmation",
+        "message": (
+            "NOT DONE YET: this was only a check, nothing has been booked, cancelled or moved. "
+            f"The caller is now being asked: {readback!r} Reply with just that question. "
+            "Make this same call again only after the caller says yes."
+        ),
+        "readback": readback,
+    }
+
+
+async def _appointment_details(
+    db: AsyncSession, appointment_id: uuid.UUID
+) -> tuple[str, str, date, time]:
+    row = (
+        await db.execute(
+            select(
+                Patient.name,
+                Doctor.name,
+                Appointment.appointment_date,
+                Appointment.appointment_time,
+            )
+            .join(Patient, Patient.id == Appointment.patient_id)
+            .join(Doctor, Doctor.id == Appointment.doctor_id)
+            .where(Appointment.id == appointment_id)
+        )
+    ).one()
+    return row[0], row[1], row[2], row[3]
+
+
+def _when(day: date, at: time) -> str:
+    """For speaking: "Monday, 9 November at 9:00 AM"."""
+    clock = at.strftime("%I:%M %p").lstrip("0")
+    return f"{WEEKDAYS[day.weekday()]}, {day.day} {day.strftime('%B')} at {clock}"
 
 
 # Argument parsing helpers
@@ -313,8 +400,34 @@ async def book_appointment(ctx: ToolContext, db: AsyncSession, a: BookArgs) -> d
         notes=a.notes,
         booking_source=BookingSource.AI_CALL,
     )
-    c = await contracts.book_appointment(db, request, now=await ctx.current_time(db))
-    return {
+    now = await ctx.current_time(db)
+    change = (
+        "book",
+        request.doctor_id,
+        request.appointment_date,
+        request.appointment_time,
+        patient.name.strip().lower(),
+    )
+    if ctx.confirm_changes and ctx.pending_change != change:
+        free = await contracts.get_available_slots(
+            db, request.doctor_id, request.appointment_date, now=now
+        )
+        if request.appointment_time not in {s.start for s in free}:
+            return {
+                "ok": False,
+                "error": "slot_unavailable",
+                "message": "That time is not free. Offer another slot from check_available_slots.",
+            }
+    if ctx.confirm_changes:
+        doctor = await db.get(Doctor, request.doctor_id)
+        readback = (
+            f"Just to confirm: {patient.name} with {doctor.name if doctor else 'the doctor'} "
+            f"on {_when(request.appointment_date, request.appointment_time)}. Shall I book it?"
+        )
+        if ctx.confirmation_needed(change, readback):
+            return _confirm_first(readback)
+    c = await contracts.book_appointment(db, request, now=now)
+    result = {
         "ok": True,
         "appointment_id": str(c.appointment_id),
         "token_number": c.token_number,
@@ -325,6 +438,8 @@ async def book_appointment(ctx: ToolContext, db: AsyncSession, a: BookArgs) -> d
         "weekday": WEEKDAYS[c.appointment_date.weekday()],
         "time": fmt_time(c.appointment_time),
     }
+    ctx.done = ("book", result)
+    return result
 
 
 async def get_my_appointments(
@@ -334,34 +449,52 @@ async def get_my_appointments(
     appts = await contracts.get_patient_appointments(
         db, ctx.hospital_id, phone, a.patient_name, now=await ctx.current_time(db)
     )
-    return {"ok": True, "appointments": [_appointment(x) for x in appts]}
+    result: dict[str, Any] = {"ok": True, "appointments": [_appointment(x) for x in appts]}
+    if not appts:
+        result["note"] = (
+            "Nothing found for this name on the caller's number. Speech recognition may have "
+            "misspelled it: ask the caller to spell it, and search again with each new name."
+        )
+    return result
 
 
 async def cancel_appointment(ctx: ToolContext, db: AsyncSession, a: CancelArgs) -> dict[str, Any]:
     phone = _require_caller(ctx)
+    appointment_id = await _own_appointment(ctx, db, a.appointment_id)
+    if ctx.confirm_changes:
+        patient, doctor, day, at = await _appointment_details(db, appointment_id)
+        readback = (
+            f"Just to confirm: cancel {patient}'s appointment with {doctor} on "
+            f"{_when(day, at)}. Shall I cancel it?"
+        )
+        if ctx.confirmation_needed(("cancel", appointment_id), readback):
+            return _confirm_first(readback)
     appt = await contracts.cancel_appointment(
-        db,
-        await _own_appointment(ctx, db, a.appointment_id),
-        phone,
-        a.reason,
-        now=await ctx.current_time(db),
+        db, appointment_id, phone, a.reason, now=await ctx.current_time(db)
     )
-    return {"ok": True, **_appointment(appt)}
+    result = {"ok": True, **_appointment(appt)}
+    ctx.done = ("cancel", result)
+    return result
 
 
 async def reschedule_appointment(
     ctx: ToolContext, db: AsyncSession, a: RescheduleArgs
 ) -> dict[str, Any]:
     phone = _require_caller(ctx)
+    appointment_id = await _own_appointment(ctx, db, a.appointment_id)
+    new_date, new_time = parse_date(a.new_date), parse_time(a.new_time)
+    if ctx.confirm_changes:
+        patient, doctor, _, _ = await _appointment_details(db, appointment_id)
+        readback = (
+            f"Just to confirm: move {patient}'s appointment with {doctor} to "
+            f"{_when(new_date, new_time)}. Shall I move it?"
+        )
+        if ctx.confirmation_needed(("reschedule", appointment_id, new_date, new_time), readback):
+            return _confirm_first(readback)
     c = await contracts.reschedule_appointment(
-        db,
-        await _own_appointment(ctx, db, a.appointment_id),
-        phone,
-        parse_date(a.new_date),
-        parse_time(a.new_time),
-        now=await ctx.current_time(db),
+        db, appointment_id, phone, new_date, new_time, now=await ctx.current_time(db)
     )
-    return {
+    result = {
         "ok": True,
         "appointment_id": str(c.appointment_id),
         "token_number": c.token_number,
@@ -371,6 +504,8 @@ async def reschedule_appointment(
         "weekday": WEEKDAYS[c.appointment_date.weekday()],
         "time": fmt_time(c.appointment_time),
     }
+    ctx.done = ("reschedule", result)
+    return result
 
 
 async def get_current_datetime(ctx: ToolContext, db: AsyncSession, _: NoArgs) -> dict[str, Any]:
@@ -383,7 +518,22 @@ async def get_current_datetime(ctx: ToolContext, db: AsyncSession, _: NoArgs) ->
     }
 
 
+_ASKS_FOR_A_PERSON = re.compile(
+    r"\b(human|person|people|staff|agent|operator|receptionist|representative|someone|somebody|"
+    r"manager|real)\b|\b(talk|speak|connect|transfer)\b.{0,25}\b(to|with|me)\b|"
+    r"इंसान|व्यक्ति|स्टाफ|किसी से|बात करा",
+    re.I,
+)
+
+
 async def transfer_to_human(ctx: ToolContext, db: AsyncSession, a: TransferArgs) -> dict[str, Any]:
+    # Ending the AI's part of a call is serious: a model that calls this by mistake (it has,
+    # on a plain "hello") must not hang up on the caller. Unless the caller just asked for a
+    # person, they are asked first.
+    if not _ASKS_FOR_A_PERSON.search(ctx.last_caller_text) and ctx.confirmation_needed(
+        ("transfer",), "Would you like me to connect you to one of our staff?"
+    ):
+        return _confirm_first("Would you like me to connect you to one of our staff?")
     ctx.escalation_reason = a.reason
     return {
         "ok": True,
