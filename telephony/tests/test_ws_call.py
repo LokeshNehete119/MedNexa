@@ -119,7 +119,7 @@ async def test_the_call_session_is_ended_when_the_caller_hangs_up(
         for _ in range(5):
             await ws.send(FRAME)
     for _ in range(100):
-        if mock_api.end_call.await_count:
+        if mock_api.end_call.await_count and capacity.calls.active == 0:
             break
         await asyncio.sleep(0.05)
     mock_api.end_call.assert_awaited_once()
