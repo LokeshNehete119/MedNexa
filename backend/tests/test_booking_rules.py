@@ -283,6 +283,26 @@ async def test_get_patient_appointments_requires_name_and_phone(db, doctor) -> N
     assert await get_patient_appointments(db, doctor.hospital_id, "bad", "Rahul", now=NOW) == []
 
 
+async def test_a_misheard_name_still_finds_the_callers_own_booking(db, doctor) -> None:
+    await book_appointment(db, booking(doctor.id, time(9), name="Asha"), now=NOW)
+    await book_appointment(db, booking(doctor.id, time(9, 30), name="Rohan Mehta"), now=NOW)
+    hid = doctor.hospital_id
+
+    for heard in ("Aasha", "asha ", "Rohan"):
+        found = await get_patient_appointments(db, hid, PHONE, heard, now=NOW)
+        assert len(found) == 1, heard
+    assert await get_patient_appointments(db, hid, PHONE, "Ershah", now=NOW) == []
+    # Someone else's number never matches, however close the name is.
+    other = "+919123456789"
+    assert await get_patient_appointments(db, hid, other, "Asha", now=NOW) == []
+
+
+async def test_an_ambiguous_misheard_name_matches_nothing(db, doctor) -> None:
+    await book_appointment(db, booking(doctor.id, time(9), name="Asha Rao"), now=NOW)
+    await book_appointment(db, booking(doctor.id, time(9, 30), name="Asha Rai"), now=NOW)
+    assert await get_patient_appointments(db, doctor.hospital_id, PHONE, "Asha", now=NOW) == []
+
+
 async def test_get_patient_appointments_upcoming_only(db, doctor) -> None:
     await book_appointment(db, booking(doctor.id, time(9)), now=NOW)
     after = datetime.combine(MONDAY + timedelta(days=1), time(8), IST)

@@ -71,18 +71,33 @@ async def purge_old_calls_daily(days: int) -> None:
         await asyncio.sleep(24 * 60 * 60)
 
 
+async def close_stale_calls_hourly() -> None:
+    """Calls cut off before they were ended (a restart, a crash) are closed: once at
+    startup, then every hour."""
+    while True:
+        try:
+            async with SessionFactory() as db:
+                closed = await call_service.close_stale_calls(db)
+            if closed:
+                logger.info("Closed %d calls that were never ended", closed)
+        except Exception:
+            logger.exception("Closing stale calls failed; retrying in an hour")
+        await asyncio.sleep(60 * 60)
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
     settings.require_auth_config()  # refuse to start with unusable auth settings
-    purge = None
+    tasks = [asyncio.create_task(close_stale_calls_hourly())]
     if settings.call_log_retention_days > 0:
-        purge = asyncio.create_task(purge_old_calls_daily(settings.call_log_retention_days))
+        tasks.append(asyncio.create_task(purge_old_calls_daily(settings.call_log_retention_days)))
     yield
-    if purge is not None:
-        purge.cancel()
+    for task in tasks:
+        task.cancel()
+    for task in tasks:
         with contextlib.suppress(asyncio.CancelledError):
-            await purge
+            await task
 
 
 def create_app() -> FastAPI:

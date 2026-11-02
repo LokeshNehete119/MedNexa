@@ -1,4 +1,5 @@
 import uuid
+from difflib import SequenceMatcher
 
 from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert
@@ -24,6 +25,43 @@ async def find_patient(
             Patient.normalized_name == normalize_name(name),
         )
     )
+
+
+_CLOSE_ENOUGH = 0.8
+
+
+def _letters(name: str) -> str:
+    return "".join(ch for ch in normalize_name(name) if ch.isalpha() or ch == " ")
+
+
+def _closeness(heard: str, stored: str) -> float:
+    heard, stored = _letters(heard), _letters(stored)
+    best = SequenceMatcher(None, heard, stored).ratio()
+    if " " not in heard:
+        # A lone first or last name matches that part of a longer stored name.
+        best = max(best, *(SequenceMatcher(None, heard, part).ratio() for part in stored.split()))
+    return best
+
+
+async def find_patient_by_sound(
+    db: AsyncSession, hospital_id: uuid.UUID, phone: str, name: str
+) -> Patient | None:
+    """The one patient on this phone whose name is close to the one heard, if any.
+
+    Speech recognition spells names differently from the booking ("Aasha" for "Asha"),
+    so an exact match alone leaves callers stuck. Only patients on the caller's own
+    number are considered, and an ambiguous match returns nothing.
+    """
+    patients = await db.scalars(
+        select(Patient).where(Patient.hospital_id == hospital_id, Patient.phone == phone)
+    )
+    scored = sorted(
+        ((_closeness(name, p.name), p) for p in patients), key=lambda x: x[0], reverse=True
+    )
+    close = [(score, p) for score, p in scored if score >= _CLOSE_ENOUGH]
+    if len(close) == 1 or (len(close) > 1 and close[0][0] - close[1][0] >= 0.1):
+        return close[0][1]
+    return None
 
 
 async def upsert_patient(db: AsyncSession, hospital_id: uuid.UUID, data: PatientIn) -> Patient:

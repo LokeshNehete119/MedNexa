@@ -208,6 +208,40 @@ async def test_override_upsert_bumps_updated_at(db) -> None:
     assert second.updated_at > first_updated
 
 
+async def test_calls_that_were_never_ended_are_closed_after_half_an_hour(db) -> None:
+    hospital = await make_hospital(db)
+    ids = {}
+    for name, age_minutes, ended in [
+        ("running", 5, False),  # a call in progress
+        ("cut_off", 45, False),  # never ended
+        ("cut_off_silent", 90, False),  # never ended, nothing said
+        ("finished", 120, True),
+    ]:
+        session = await call_service.start_call(
+            db, CallSessionCreate(hospital_id=hospital.id, caller_phone="9876543210")
+        )
+        if name != "cut_off_silent":
+            await call_service.append_log(
+                db, session.id, CallLogCreate(role=CallRole.USER, content="Hello")
+            )
+        if ended:
+            await call_service.end_call(
+                db, session.id, CallSessionEnd(call_outcome=CallOutcome.BOOKED)
+            )
+        session.call_start = datetime.now(UTC) - timedelta(minutes=age_minutes)
+        ids[name] = session.id
+    await db.commit()
+
+    assert await call_service.close_stale_calls(db) == 2
+    calls = {c.id: c for c in (await call_service.list_calls(db, hospital_id=hospital.id))[0]}
+    assert calls[ids["running"]].call_end is None  # still in progress
+    assert calls[ids["cut_off"]].call_end is not None
+    assert calls[ids["cut_off"]].call_outcome == CallOutcome.ABANDONED
+    assert calls[ids["cut_off_silent"]].call_end == calls[ids["cut_off_silent"]].call_start
+    assert calls[ids["finished"]].call_outcome == CallOutcome.BOOKED  # left alone
+    assert await call_service.close_stale_calls(db) == 0  # nothing more to do
+
+
 async def test_purge_deletes_only_calls_past_the_retention_period(db) -> None:
     hospital = await make_hospital(db)
     sessions = []

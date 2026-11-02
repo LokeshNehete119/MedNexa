@@ -36,7 +36,7 @@ from app.core.timeutils import hospital_now
 from app.models import Appointment, AppointmentStatus, BookingSource, Doctor, Hospital, Patient
 from app.schemas.appointment import AppointmentOut, BookingConfirmation, BookingRequest
 from app.services.common import paginate
-from app.services.patient_service import find_patient, upsert_patient
+from app.services.patient_service import find_patient, find_patient_by_sound, upsert_patient
 from app.services.slot_service import DayPlan, is_bookable_doctor, load_day_plan
 
 SLOT_INDEX = "uq_appointment_doctor_slot_booked"
@@ -346,6 +346,8 @@ async def get_patient_appointments(
     except ValueError:
         return []
     patient = await find_patient(db, hospital_id, phone, patient_name)
+    if patient is None:
+        patient = await find_patient_by_sound(db, hospital_id, phone, patient_name)
     if patient is None:
         return []
     query = (
