@@ -1,9 +1,3 @@
-"""Replies the receptionist says itself, word for word, instead of asking the model.
-
-After a booking, cancellation or rescheduling the details (time, token number) must be exact,
-and generating the sentence takes the model a whole extra round trip. Language: "en" or "hi".
-"""
-
 from datetime import date, time
 from typing import Any
 
@@ -14,7 +8,6 @@ MONTHS_HI = [
 
 
 def _clock(value: str) -> str:
-    """Times like "09:30", "9:30" or "09:30:00", as they are spoken: "9:30 AM"."""
     hour, minute = (int(part) for part in value.strip().split(":")[:2])
     return time(hour, minute).strftime("%I:%M %p").lstrip("0")
 
@@ -28,7 +21,6 @@ def _when(data: dict[str, Any], language: str) -> str:
 
 
 def done_reply(kind: str, data: dict[str, Any], language: str) -> str:
-    """What to say after `kind` ("book", "cancel" or "reschedule") succeeded."""
     when = _when(data, language)
     doctor, patient, token = data["doctor_name"], data["patient_name"], data["token_number"]
     if language == "hi":

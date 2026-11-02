@@ -1,5 +1,3 @@
-"""Tests for the TTS module (Piper + Edge-TTS)."""
-
 from __future__ import annotations
 
 import asyncio
@@ -20,13 +18,11 @@ from telephony.tts import (
     trim_silence,
 )
 
-# TTSEngine
-
 
 @pytest.fixture(autouse=True)
 def fresh_cache(monkeypatch: pytest.MonkeyPatch) -> None:
     TTSEngine._cache.clear()
-    monkeypatch.setattr("telephony.tts._retry_pause", AsyncMock())  # no real retry waits
+    monkeypatch.setattr("telephony.tts._retry_pause", AsyncMock())
 
 
 def make_engine(*, piper: object | None = None, edge: object | None = None) -> TTSEngine:
@@ -86,7 +82,7 @@ class TestTTSEngine:
         engine = make_engine(piper=piper, edge=edge_returning(b"\x02" * 50))
 
         assert await engine.speak("Test", "en") == b"\x02" * 50
-        assert engine._piper_ok is False  # not tried again
+        assert engine._piper_ok is False
 
     @pytest.mark.asyncio
     async def test_a_failed_attempt_is_retried(self) -> None:
@@ -214,14 +210,14 @@ class TestTrimSilence:
     def test_the_silence_around_speech_is_cut_but_a_short_gap_stays(self) -> None:
         trimmed = trim_silence(silence(0.26) + tone(1.0) + silence(0.9))
         seconds = len(trimmed) / 2 / SAMPLE_RATE
-        assert 1.15 < seconds < 1.25  # 1.0 s of speech + 0.04 s lead + 0.15 s tail
+        assert 1.15 < seconds < 1.25
 
     def test_speech_itself_is_untouched(self) -> None:
         loud = tone(1.0)
         assert loud in trim_silence(silence(0.5) + loud + silence(0.5))
 
     def test_quiet_noise_around_the_speech_counts_as_silence(self) -> None:
-        noise = np.full(SAMPLE_RATE, 30, dtype=np.int16).tobytes()  # far below speech level
+        noise = np.full(SAMPLE_RATE, 30, dtype=np.int16).tobytes()
         trimmed = trim_silence(noise + tone(0.5) + noise)
         assert len(trimmed) / 2 / SAMPLE_RATE < 0.8
 
@@ -250,7 +246,6 @@ class TestSplitSentences:
         assert len(split_sentences(text)) == 4
 
     def test_dr_is_not_the_end_of_a_sentence(self) -> None:
-        """ "...confirmed with Dr." / "Suresh Patel..." was spoken with a pause after "Dr."."""
         text = (
             "Your appointment is confirmed with Dr. Suresh Patel on Tuesday. Please arrive early."
         )
@@ -269,12 +264,6 @@ class TestSplitSentences:
         assert len(split_sentences(text)) == 2
 
 
-# The μ-law codec is tested in tests/test_audio_codec.py.
-
-
-# Audio quality
-
-
 class TestAudioUtils:
     def test_normalise_silence_unchanged(self) -> None:
         from telephony.audio_utils import normalise_audio
@@ -287,13 +276,11 @@ class TestAudioUtils:
 
         from telephony.audio_utils import normalise_audio, pcm_to_float
 
-        # Very quiet signal
         samples = (np.ones(1600, dtype=np.float32) * 0.001 * 32767).astype(np.int16)
         pcm = samples.tobytes()
         result = normalise_audio(pcm)
         result_arr = pcm_to_float(result)
         original_arr = pcm_to_float(pcm)
-        # The normalised version should be louder
         assert float(result_arr.max()) > float(original_arr.max())
 
     def test_high_pass_returns_same_length(self) -> None:
@@ -326,7 +313,6 @@ class TestPiperSampleRate:
     async def test_piper_output_is_resampled_to_16k(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Piper voices speak at their own rate (22050 Hz for *-medium voices)."""
         import json
 
         import telephony.config as cfg_module
@@ -350,12 +336,11 @@ class TestPiperSampleRate:
 
         monkeypatch.setattr("asyncio.create_subprocess_exec", fake_exec)
         pcm = await PiperTTS().synthesize("Hello", "en")
-        assert len(pcm) == 16000 * 2  # still one second, now at 16 kHz
+        assert len(pcm) == 16000 * 2
 
 
 class TestAudioProcessorStreaming:
     def test_high_pass_is_continuous_across_chunks(self) -> None:
-        """Filtering a stream chunk by chunk must equal filtering it in one go."""
         import numpy as np
 
         from telephony.audio_utils import AudioProcessor
@@ -377,6 +362,6 @@ class TestAudioProcessorStreaming:
         from telephony.audio_utils import AudioProcessor
 
         rng = np.random.default_rng(0)
-        hiss = (rng.normal(0, 30, 320)).astype(np.int16).tobytes()  # ~-60 dBFS noise
+        hiss = (rng.normal(0, 30, 320)).astype(np.int16).tobytes()
         out = np.frombuffer(AudioProcessor().process(hiss), np.int16)
-        assert np.abs(out).max() < 200  # per-chunk normalisation made this ~3000
+        assert np.abs(out).max() < 200

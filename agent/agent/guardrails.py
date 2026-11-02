@@ -1,15 +1,3 @@
-"""Output guardrails applied to every reply before it is spoken.
-
-Checks, in order:
-- empty reply             -> ask the caller to repeat
-- medical advice          -> replaced with a safe refusal + offer to book a doctor
-- ungrounded action claim -> a "booked/cancelled/rescheduled" or token-number claim
-                             with no matching successful tool result in this call
-                             is replaced with a safe retry message
-- internal IDs (UUIDs)    -> removed (never read aloud)
-- length                  -> trimmed at a sentence boundary for speech
-"""
-
 import re
 from dataclasses import dataclass, field
 
@@ -41,8 +29,6 @@ _CLAIMS: dict[ActionKind, list[re.Pattern[str]]] = {
             r"\b(appointment|it|slot)\s+(is|has been|was)\s+(successfully\s+)?(booked|confirmed)",
             r"\bi('ve| have)\s+(booked|confirmed)\b",
             r"\bsuccessfully booked\b",
-            # "You're booked for 9 AM", "your slot at 9 AM on Tuesday is confirmed". Only the
-            # caller's own appointment: "Dr. Sharma is booked on Monday" is a fact, not a claim.
             r"\b(you('re| are| have been)|you've been)\s+(now\s+)?(booked|confirmed|scheduled)\b",
             r"\byour\s+(appointment|booking|slot|visit)\b.{0,60}\b(is|has been|was)\s+"
             r"(now\s+)?(successfully\s+)?(booked|confirmed|scheduled|set)\b",
@@ -132,7 +118,6 @@ def apply_guardrails(
     if any(p.search(text) for p in _MEDICAL_ADVICE):
         return GuardrailResult(_fallback("medical_advice", language), ["medical_advice"])
     if _ungrounded(text, events):
-        # If the model announced a change that was only checked, ask the question instead.
         last = events.events[-1] if events.events else None
         if last is not None and last.data.get("error") == "needs_confirmation":
             readback = last.data.get("readback")

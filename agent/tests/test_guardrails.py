@@ -91,7 +91,6 @@ def test_talking_about_availability_or_asking_to_confirm_is_not_a_claim(text: st
 
 
 def test_a_false_claim_after_a_check_is_replaced_by_the_read_back() -> None:
-    """The model said "you're booked" though the tool only checked: ask the real question."""
     readback = (
         "Just to confirm: Rohan Mehta with Dr. Anil Sharma on Monday at 9:00 AM. Shall I book it?"
     )

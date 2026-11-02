@@ -1,6 +1,3 @@
-"""How many calls are being answered at once, so a busy line turns callers away politely
-instead of making every call slow."""
-
 from __future__ import annotations
 
 from telephony.config import get_settings

@@ -70,7 +70,7 @@ async def test_circuit_breaker_skips_local_then_recovers() -> None:
         await router.ainvoke(MESSAGES)
     assert router.circuit_open
 
-    await router.ainvoke(MESSAGES)  # local skipped while open
+    await router.ainvoke(MESSAGES)
     assert len(local.calls) == 3
 
     clock.now += 61
@@ -133,8 +133,8 @@ def test_build_router_wires_providers_from_settings() -> None:
     from agent.router import build_router
 
     local_only = build_router(settings())
-    assert local_only._local is not None and local_only._cloud is None  # no API key
-    assert local_only._local._model.num_ctx == 8192  # Ollama's 4096 default is too small
+    assert local_only._local is not None and local_only._cloud is None
+    assert local_only._local._model.num_ctx == 8192
 
     groq = build_router(settings(groq_api_key="test-key"))
     assert groq._cloud is not None and groq._cloud.name == "groq:openai/gpt-oss-20b"
@@ -162,9 +162,9 @@ def test_build_router_wires_providers_from_settings() -> None:
     assert isinstance(hosted._cloud, SpilloverProvider)
     first = hosted._cloud._providers[0]
     assert first._model.openai_api_base == "https://api.featherless.ai/v1"
-    assert first._model.request_timeout == 10.0  # a stalled request is abandoned and retried
+    assert first._model.request_timeout == 10.0
 
-    with pytest.raises(NoProviderAvailable):  # cloud forced but no key configured
+    with pytest.raises(NoProviderAvailable):
         build_router(settings(llm_mode="cloud"))
 
 
@@ -224,7 +224,6 @@ async def test_a_connection_error_is_retried_and_the_call_succeeds() -> None:
 
 
 async def test_a_corrupt_reply_from_the_model_host_is_retried() -> None:
-    """Featherless once returned a truncated JSON body."""
     cloud = ScriptedProvider(
         "cloud", [json.JSONDecodeError("Expecting ',' delimiter", "{}", 298), say("ok")]
     )
@@ -232,8 +231,7 @@ async def test_a_corrupt_reply_from_the_model_host_is_retried() -> None:
     assert (await router.ainvoke(MESSAGES)).content == "ok"
 
 
-class RequestTimeout(Exception):
-    """Like openai.APITimeoutError and groq.APITimeoutError."""
+class RequestTimeout(Exception): ...
 
 
 async def test_a_stalled_request_is_retried() -> None:
@@ -247,7 +245,7 @@ async def test_retries_are_limited() -> None:
     router = ModelRouter(settings(llm_retry_delay_seconds=0, llm_retries=2), None, cloud)
     with pytest.raises(NoProviderAvailable):
         await router.ainvoke(MESSAGES)
-    assert len(cloud.calls) == 3  # the first try and two retries
+    assert len(cloud.calls) == 3
 
 
 @pytest.mark.parametrize("error", [Unavailable(), RateLimited()])

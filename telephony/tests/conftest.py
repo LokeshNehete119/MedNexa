@@ -1,9 +1,3 @@
-"""pytest configuration for the telephony test suite.
-
-Sets up async test infrastructure and overrides settings so that
-tests never touch real external services.
-"""
-
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
@@ -16,7 +10,6 @@ from telephony.config import TelephonySettings
 
 @pytest.fixture(autouse=True)
 def override_settings(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Override settings for all tests so they never hit real services."""
     import telephony.config as cfg_module
 
     test_settings = TelephonySettings(
@@ -38,13 +31,11 @@ def override_settings(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.fixture(autouse=True)
 def short_utterances_count(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The test audio is a few KB; real utterances shorter than 0.3 s are ignored."""
     monkeypatch.setattr("telephony.pipeline.MIN_UTTERANCE_BYTES", 0)
 
 
 @pytest.fixture()
 def mock_vad(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
-    """Replace SileroVAD with a mock that returns configurable events."""
     vad = MagicMock()
     vad.in_speech = False
     vad.process_chunk.return_value = ["silence"]
@@ -55,7 +46,6 @@ def mock_vad(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
 
 @pytest.fixture()
 def mock_stt(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
-    """Replace FasterWhisperSTT with a mock."""
     from telephony.stt import TranscriptionResult
 
     stt = MagicMock()
@@ -71,7 +61,6 @@ def mock_stt(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
 
 @pytest.fixture()
 def mock_tts(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
-    """Replace TTSEngine with a mock that streams one empty chunk."""
 
     async def fake_stream(text: str, lang: str) -> AsyncIterator[bytes]:
         yield b"\x00" * 100
@@ -84,7 +73,6 @@ def mock_tts(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
 
 @pytest.fixture()
 def mock_api(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
-    """Replace BackendClient with an async mock."""
     client = AsyncMock()
     client.append_log = AsyncMock()
     client.end_call = AsyncMock()
@@ -95,7 +83,6 @@ def mock_api(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
 
 @pytest.fixture()
 def mock_recorder(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
-    """Replace CallRecorder with a no-op mock."""
     recorder = MagicMock()
     recorder.enabled = False
     recorder.__enter__ = MagicMock(return_value=recorder)

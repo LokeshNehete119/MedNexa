@@ -125,8 +125,8 @@
     hearing: ["Listening", "Keep going. Pause when you are done."],
     thinking: ["Working on a reply", "This can take a few seconds."],
   };
-  const SPEECH_LEVEL = 0.02; // microphone level (0-1) taken as the caller speaking
-  const ECHO_TAIL = 0.7; // seconds the microphone stays off after the receptionist stops
+  const SPEECH_LEVEL = 0.02;
+  const ECHO_TAIL = 0.7;
 
   const $ = (id) => document.getElementById(id);
   let ws, audioContext, micStream, processor;
@@ -158,7 +158,7 @@
     $("lines").scrollTop = $("lines").scrollHeight;
   }
 
-  // If the server could not make the audio for a reply, the browser's own voice reads it.
+
   function speakInBrowser(text) {
     if (!("speechSynthesis" in window)) return;
     const utterance = new SpeechSynthesisUtterance(text);
@@ -215,8 +215,8 @@
       const input = e.inputBuffer.getChannelData(0);
       const now = audioContext.currentTime;
       const playing = nextPlayTime > now || browserSpeaking;
-      // While a reply is worked out or played, send silence: neither background
-      // noise nor the receptionist's own voice should count as the caller.
+
+
       const muted = serverThinking || playing || now < nextPlayTime + ECHO_TAIL;
 
       let sum = 0;
@@ -255,8 +255,8 @@
     nextPlayTime += audio.duration;
   }
 
-  // The server sends audio faster than it plays, so when the call ends the last words
-  // are still queued: let them finish before closing the audio.
+
+
   function endCall(message, letAudioFinish) {
     inCall = false;
     serverThinking = false;

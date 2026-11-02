@@ -44,7 +44,7 @@ export function ScheduleOverrideDialog({
   const { hospital } = useHospital();
   const today = todayIn(hospital?.timezone);
   const [date, setDate] = React.useState(defaultDate || today);
-  const [isLeave, setIsLeave] = React.useState(true); // true = Leave/Unavailable, false = Custom hours
+  const [isLeave, setIsLeave] = React.useState(true);
   const [startTime, setStartTime] = React.useState("09:00");
   const [endTime, setEndTime] = React.useState("17:00");
   const [reason, setReason] = React.useState("");

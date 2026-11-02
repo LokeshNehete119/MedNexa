@@ -1,5 +1,3 @@
-"""The evaluation harness, driven by a scripted LLM (real runs use a real model)."""
-
 from app.models import Appointment, AppointmentStatus
 from sqlalchemy import select
 

@@ -1,16 +1,3 @@
-"""ModelRouter: one interface over the local (Ollama) and cloud (Groq/OpenAI) LLMs.
-
-Routing per call:
-  1. LLM_MODE=local / cloud forces one side.
-  2. Hindi turns go to the cloud when `hindi_prefers_cloud` (better quality).
-  3. Otherwise try local, bounded by `max_latency_seconds`; on timeout or error,
-     answer from the cloud instead.
-  4. Circuit breaker: after `circuit_failure_threshold` consecutive local
-     failures, skip local for `circuit_open_seconds`.
-
-Every call's provider and latency are logged.
-"""
-
 import asyncio
 import json
 import logging
@@ -27,8 +14,6 @@ logger = logging.getLogger(__name__)
 
 
 class ChatProvider(Protocol):
-    """Anything that turns messages (+ tool schemas) into an AIMessage."""
-
     name: str
 
     async def ainvoke(
@@ -37,8 +22,6 @@ class ChatProvider(Protocol):
 
 
 class LangChainProvider:
-    """Adapts a LangChain chat model (ChatOllama, ChatGroq, ChatOpenAI) to ChatProvider."""
-
     def __init__(self, name: str, model: Any) -> None:
         self.name = name
         self._model = model
@@ -58,10 +41,9 @@ def _rate_limited(exc: BaseException) -> bool:
 
 
 def _transient(exc: BaseException) -> bool:
-    """A network problem, a rate limit or a server error: worth trying again in a moment."""
     status = getattr(exc, "status_code", None)
     return (
-        isinstance(exc, ConnectionError | json.JSONDecodeError)  # a cut-off or corrupt reply
+        isinstance(exc, ConnectionError | json.JSONDecodeError)
         or "Connection" in type(exc).__name__
         or "Timeout" in type(exc).__name__
         or (isinstance(status, int) and (status == 429 or status >= 500))
@@ -69,10 +51,6 @@ def _transient(exc: BaseException) -> bool:
 
 
 class SpilloverProvider:
-    """Several models behind one provider: one that is rate limited or fails (a network error,
-    a server error, a corrupt reply) hands the request to the next straight away; only the
-    last one is retried by the router."""
-
     def __init__(self, providers: Sequence[ChatProvider]) -> None:
         self._providers = list(providers)
         self.name = self._providers[0].name
@@ -84,7 +62,6 @@ class SpilloverProvider:
             try:
                 result = await provider.ainvoke(messages, tools)
             except Exception as exc:
-                # A busy or misbehaving model: the next one answers instead of the call waiting.
                 if not (_rate_limited(exc) or _transient(exc)):
                     raise
                 logger.info(
@@ -104,8 +81,6 @@ class NoProviderAvailable(RuntimeError):
 
 @dataclass
 class RouterStats:
-    """Recent routing decisions, exposed for logging/monitoring."""
-
     calls: dict[str, int] = field(default_factory=dict)
     fallbacks: int = 0
     last_latency_ms: int | None = None
@@ -136,7 +111,6 @@ class ModelRouter:
         return self._clock() < self._circuit_open_until
 
     def _choose(self, language: str) -> list[tuple[ChatProvider, float]]:
-        """Ordered (provider, timeout) attempts for this call."""
         s = self._settings
         if s.llm_mode == LLMMode.LOCAL:
             order = [self._local]
@@ -147,8 +121,6 @@ class ModelRouter:
         else:
             order = [self._local, self._cloud]
         providers = [p for p in order if p is not None]
-        # The latency cap only applies to the local model when a cloud attempt follows;
-        # when it is the last option, a slow answer beats none.
         return [
             (
                 p,
@@ -173,14 +145,13 @@ class ModelRouter:
         last_error: BaseException | None = None
         for index, (provider, timeout) in enumerate(attempts):
             is_last = index + 1 == len(attempts)
-            # With another model to fall back to, don't wait out a retry on this one.
             tries = 1 + (s.llm_retries if is_last else 0)
             for attempt in range(tries):
                 start = self._clock()
                 try:
                     async with asyncio.timeout(timeout):
                         result = await provider.ainvoke(messages, tools)
-                except Exception as exc:  # includes TimeoutError from the latency cap
+                except Exception as exc:
                     last_error = exc
                     if attempt + 1 < tries and _transient(exc):
                         logger.warning(
@@ -224,8 +195,6 @@ class ModelRouter:
 
 
 def build_router(settings: AgentSettings) -> ModelRouter:
-    """Router with real providers from settings. Cloud is only set up when its API
-    key is present; local is skipped when LLM_MODE=cloud."""
     local: ChatProvider | None = None
     if settings.llm_mode != LLMMode.CLOUD:
         from langchain_ollama import ChatOllama
@@ -280,9 +249,7 @@ def build_router(settings: AgentSettings) -> ModelRouter:
 def _cloud_models(
     settings: AgentSettings, prefix: str, make: Callable[[str, int], Any]
 ) -> ChatProvider:
-    """The cloud model, plus any fallback models that answer when it is rate limited."""
     models = [settings.cloud_model, *settings.cloud_fallback_models]
-    # Retrying is the router's job (with a short, bounded wait), not the SDK's.
     providers: list[ChatProvider] = [
         LangChainProvider(f"{prefix}:{model}", make(model, 0)) for model in models
     ]

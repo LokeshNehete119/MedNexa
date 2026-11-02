@@ -1,16 +1,3 @@
-"""Agent tools: thin wrappers around the backend's service contract (app.services.contracts).
-
-Each tool:
-- takes LLM-provided arguments validated by a Pydantic model;
-- gets `hospital_id` and the caller's phone from the call context, never from the LLM;
-- opens its own DB session and calls `app.services.contracts`;
-- returns a JSON-serialisable dict: {"ok": true, ...} or
-  {"ok": false, "error": <code>, "message": <text for the caller>}.
-
-Domain errors (slot taken, not owner, ...) become {"ok": false} results the LLM
-can explain; they are never raised into the agent loop.
-"""
-
 import logging
 import re
 import uuid
@@ -38,29 +25,22 @@ WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", 
 
 @dataclass
 class ToolContext:
-    """Per-call state shared by all tools."""
-
     hospital_id: uuid.UUID
-    caller_phone: str | None  # normalized; None when caller ID is unavailable
+    caller_phone: str | None
     session_factory: async_sessionmaker[AsyncSession]
-    now: Callable[[], datetime] | None = None  # override for tests
+    now: Callable[[], datetime] | None = None
     events: CallEvents = field(default_factory=CallEvents)
     escalation_reason: str | None = None
-    # With confirm_changes, booking, cancelling, rescheduling and transferring need two tool
-    # calls. The first only checks: the receptionist then asks the caller, word for word
-    # (the graph replaces the model's reply with `readback`). The second goes ahead only if
-    # the caller's next message is a clear yes. The model cannot skip or fake either step.
     confirm_changes: bool = False
     last_caller_text: str = ""
     turn: int = 0
     pending_change: tuple[Any, ...] | None = None
     pending_turn: int = -1
-    readback: str | None = None  # the question for the caller, set during this turn
+    readback: str | None = None
     readback_spoken: bool = False
-    done: tuple[str, dict[str, Any]] | None = None  # a change made this turn: (kind, result)
+    done: tuple[str, dict[str, Any]] | None = None
 
     def confirmation_needed(self, change: tuple[Any, ...], readback: str) -> bool:
-        """True unless the caller has just said yes to a question about this exact change."""
         if not self.confirm_changes:
             return False
         agreed = (
@@ -83,8 +63,7 @@ class ToolContext:
         return hospital_now(tz or "Asia/Kolkata")
 
 
-class ToolInputError(ValueError):
-    """An argument the LLM supplied could not be understood."""
+class ToolInputError(ValueError): ...
 
 
 _YES = re.compile(
@@ -101,13 +80,10 @@ _NO = re.compile(
 
 
 def says_yes(text: str) -> bool:
-    """A clear yes, in English, Hindi or Hinglish; any no or "but" in it makes it not clear."""
     return bool(_YES.search(text)) and not _NO.search(text)
 
 
 def _confirm_first(readback: str) -> dict[str, Any]:
-    """The result of the first, checking-only call of a change. The receptionist asks the
-    caller `readback` itself, whatever the model writes next."""
     return {
         "ok": False,
         "error": "needs_confirmation",
@@ -140,12 +116,9 @@ async def _appointment_details(
 
 
 def _when(day: date, at: time) -> str:
-    """For speaking: "Monday, 9 November at 9:00 AM"."""
     clock = at.strftime("%I:%M %p").lstrip("0")
     return f"{WEEKDAYS[day.weekday()]}, {day.day} {day.strftime('%B')} at {clock}"
 
-
-# Argument parsing helpers
 
 _TIME_12H = re.compile(r"^\s*(\d{1,2})(?::(\d{2}))?\s*([ap])\.?\s*m\.?\s*$", re.I)
 
@@ -158,7 +131,6 @@ def parse_date(value: str) -> date:
 
 
 def parse_time(value: str) -> time:
-    """Accepts 24-hour 'HH:MM' (or 'H:MM') and 12-hour '10:30 AM' / '4 pm'."""
     value = value.strip()
     match = _TIME_12H.match(value)
     if match:
@@ -200,7 +172,6 @@ def _appointment(a: AppointmentOut) -> dict[str, Any]:
 
 
 async def _own_doctor(ctx: ToolContext, db: AsyncSession, raw_id: str) -> uuid.UUID:
-    """The doctor id, if that doctor belongs to the hospital this call came in on."""
     doctor_id = parse_id(raw_id, "doctor")
     hospital_id = await db.scalar(select(Doctor.hospital_id).where(Doctor.id == doctor_id))
     if hospital_id != ctx.hospital_id:
@@ -209,7 +180,6 @@ async def _own_doctor(ctx: ToolContext, db: AsyncSession, raw_id: str) -> uuid.U
 
 
 async def _own_appointment(ctx: ToolContext, db: AsyncSession, raw_id: str) -> uuid.UUID:
-    """The appointment id, if it belongs to the hospital this call came in on."""
     appointment_id = parse_id(raw_id, "appointment")
     hospital_id = await db.scalar(
         select(Appointment.hospital_id).where(Appointment.id == appointment_id)
@@ -223,9 +193,6 @@ def _require_caller(ctx: ToolContext) -> str:
     if not ctx.caller_phone:
         raise DomainError("The caller's phone number is unavailable on this call")
     return ctx.caller_phone
-
-
-# Tool argument models
 
 
 class NoArgs(BaseModel):
@@ -283,9 +250,6 @@ class RescheduleArgs(BaseModel):
 
 class TransferArgs(BaseModel):
     reason: str = Field(description="Why the caller needs a human")
-
-
-# Tool implementations
 
 
 async def get_hospital_info(
@@ -527,9 +491,6 @@ _ASKS_FOR_A_PERSON = re.compile(
 
 
 async def transfer_to_human(ctx: ToolContext, db: AsyncSession, a: TransferArgs) -> dict[str, Any]:
-    # Ending the AI's part of a call is serious: a model that calls this by mistake (it has,
-    # on a plain "hello") must not hang up on the caller. Unless the caller just asked for a
-    # person, they are asked first.
     if not _ASKS_FOR_A_PERSON.search(ctx.last_caller_text) and ctx.confirmation_needed(
         ("transfer",), "Would you like me to connect you to one of our staff?"
     ):
@@ -541,8 +502,6 @@ async def transfer_to_human(ctx: ToolContext, db: AsyncSession, a: TransferArgs)
         "reason": a.reason,
     }
 
-
-# Registry
 
 ToolFn = Callable[[ToolContext, AsyncSession, Any], Awaitable[dict[str, Any]]]
 
@@ -556,7 +515,6 @@ class ToolSpec:
     kind: ActionKind
 
     def schema(self) -> dict[str, Any]:
-        """OpenAI-style function schema (accepted by Ollama, Groq and OpenAI)."""
         params = self.args.model_json_schema()
         params.pop("title", None)
         for prop in params.get("properties", {}).values():
@@ -599,7 +557,6 @@ TOOLS_BY_NAME = {t.name: t for t in TOOLS}
 
 
 async def execute_tool(ctx: ToolContext, name: str, raw_args: dict[str, Any]) -> dict[str, Any]:
-    """Run one tool call and record it in ctx.events. Never raises."""
     spec = TOOLS_BY_NAME.get(name)
     if spec is None:
         return {"ok": False, "error": "unknown_tool", "message": f"No tool named {name!r}"}

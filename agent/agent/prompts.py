@@ -1,8 +1,3 @@
-"""System prompt with hospital context loaded from the database.
-
-Patient data is never put in the prompt; the agent fetches it per call via tools.
-"""
-
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, time
@@ -168,8 +163,6 @@ LANGUAGE
 
 
 def greeting(ctx: HospitalContext | None, language: str | None = None) -> str:
-    """Opening line; works without hospital context (e.g. the database is down).
-    Without a chosen language it invites the caller to speak Hindi too."""
     if language == "hi":
         place = f"{ctx.name} में आपका स्वागत है।" if ctx else "कॉल करने के लिए धन्यवाद।"
         return f"नमस्ते! {place} मैं एआई रिसेप्शनिस्ट हूँ। मैं आपकी कैसे मदद कर सकती हूँ?"

@@ -1,5 +1,3 @@
-"""The sentences the receptionist says itself after a booking, cancellation or reschedule."""
-
 import pytest
 
 from agent.replies import done_reply

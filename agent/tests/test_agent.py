@@ -1,5 +1,3 @@
-"""Full agent turns: real graph, tools and database, with a scripted LLM."""
-
 import json
 import uuid
 from collections.abc import Sequence
@@ -30,7 +28,7 @@ def last_tool_result(messages: Sequence[BaseMessage]) -> dict:
 
 def make_agent(seed, session_factory, replies, *, phone: str = CALLER, **settings):
     provider = ScriptedProvider("scripted", replies)
-    settings.setdefault("confirm_changes", False)  # most tests book in a single call
+    settings.setdefault("confirm_changes", False)
     settings.setdefault("llm_retry_delay_seconds", 0)
     config = AgentSettings(_env_file=None, **settings)
     agent = MedNexaAgent(
@@ -92,11 +90,10 @@ async def test_booking_waits_for_the_caller_to_say_yes_to_the_read_back(
         confirm_changes=True,
     )
     reply = await agent.process("Book a heart doctor on Monday for Rahul Kumar", "en")
-    # The caller is asked the exact question, whatever the model wrote.
     assert reply.startswith("Just to confirm: " + BOOK_ARGS_MONDAY_9)
     assert reply.endswith("at 9:00 AM. Shall I book it?")
     async with session_factory() as db:
-        assert await db.scalar(select(Appointment)) is None  # nothing booked yet
+        assert await db.scalar(select(Appointment)) is None
     assert agent.call_outcome == "OTHER"
 
     done = await agent.process("Yes, please", "en")
@@ -106,9 +103,7 @@ async def test_booking_waits_for_the_caller_to_say_yes_to_the_read_back(
         assert (await db.scalar(select(Appointment))).status == AppointmentStatus.BOOKED
     assert agent.call_outcome == "BOOKED"
 
-    # No second model call was needed for either reply: one call per turn.
     assert len(provider.calls) == 2
-    # The model's history holds the question the caller was actually asked.
     asked = [m.content for m in provider.calls[-1][0] if m.type == "ai" and not m.tool_calls]
     assert any(text.startswith("Just to confirm: ") for text in asked)
 
@@ -132,13 +127,12 @@ async def test_anything_but_a_clear_yes_does_not_book(seed, session_factory, ans
     )  # fmt: skip
     await agent.process("Book Dr. Sharma Monday 9 for Rahul Kumar", "en")
     reply = await agent.process(answer, "en")
-    assert reply.startswith("Just to confirm: ")  # asked again instead of booking
+    assert reply.startswith("Just to confirm: ")
     async with session_factory() as db:
         assert await db.scalar(select(Appointment)) is None
 
 
 async def test_a_yes_to_a_different_question_does_not_book(seed, session_factory) -> None:
-    """The model checks one booking, the caller then says yes, but the model books another."""
     first = {
         "patient_name": "Rahul Kumar",
         "doctor_id": str(seed.cardiologist.id),
@@ -174,7 +168,7 @@ async def test_a_model_that_books_twice_in_one_turn_still_waits_for_the_caller(
             {"name": "book_appointment", "args": args, "id": "c1"},
             {"name": "book_appointment", "args": args, "id": "c2"},
         ],
-    )  # the same booking twice, in one message
+    )
     agent, _ = make_agent(seed, session_factory, [both], confirm_changes=True)
     reply = await agent.process("Book Dr. Sharma Monday 9 for Rahul Kumar", "en")
     assert reply.startswith("Just to confirm: ")
@@ -196,7 +190,6 @@ async def test_the_confirmation_names_the_patient_doctor_and_time(seed, session_
         confirm_changes=True,
     )
     reply = await agent.process("Book Dr. Sharma Monday 9 for Rahul Kumar", "en")
-    # The model claimed a booking that was only checked, so the exact question is asked.
     assert reply.startswith("Just to confirm: Rahul Kumar with Dr. Anil Sharma on Monday, ")
     assert reply.endswith("at 9:00 AM. Shall I book it?")
 
@@ -262,7 +255,6 @@ async def test_booking_conversation_end_to_end(seed, session_factory) -> None:
                    "Shall I book it, and what is the patient's name?")  # fmt: skip
 
     def do_book(messages):
-        # The earlier find_next_available result is still in the conversation history.
         slot = last_tool_result(messages)["slots"][0]
         return call("book_appointment", "c2", patient_name="Rahul Kumar",
                     doctor_id=slot["doctor_id"], date=slot["date"], time=slot["time"])  # fmt: skip
@@ -292,7 +284,6 @@ async def test_booking_conversation_end_to_end(seed, session_factory) -> None:
     assert agent.call_outcome == "BOOKED"
     assert "Booked Rahul Kumar with Dr. Anil Sharma" in (await agent.get_summary() or "")
 
-    # The LLM saw: system prompt, greeting, and both caller turns (memory across turns).
     sent, tools = provider.calls[-1]
     assert isinstance(sent[0], SystemMessage) and "Test City Hospital" in sent[0].content
     assert sent[1].content.startswith("Namaste!")
@@ -381,7 +372,7 @@ async def test_the_greeting_survives_a_failed_first_turn(seed, session_factory) 
 
 async def test_speech_hints_name_the_doctors_and_departments(seed, session_factory) -> None:
     agent, _ = make_agent(seed, session_factory, [])
-    assert agent.speech_hints is None  # nothing is known before the greeting loads the hospital
+    assert agent.speech_hints is None
     await agent.get_greeting()
     hints = agent.speech_hints
     assert "Test City Hospital" in hints and "Dr. Anil Sharma" in hints and "Cardiology" in hints
@@ -452,10 +443,9 @@ def test_recent_history_keeps_latest_caller_turn(limit: int) -> None:
 
 async def test_greeting_survives_a_missing_hospital(seed, session_factory) -> None:
     agent, _ = make_agent(seed, session_factory, [])
-    agent.ctx.hospital_id = uuid.uuid4()  # e.g. a misconfigured hospital id
+    agent.ctx.hospital_id = uuid.uuid4()
     greeting = await agent.get_greeting()
     assert greeting.startswith("Namaste!") and "हिंदी" in greeting
-    # No turn can build a prompt either: the caller is asked to repeat, then handed to staff.
     for _ in range(2):
         assert "say that again" in await agent.process("Hello", "en")
     assert "connect you to our staff" in await agent.process("Hello", "en")

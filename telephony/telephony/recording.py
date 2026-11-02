@@ -1,8 +1,3 @@
-"""Call recordings: {recordings_dir}/{session_id}_{YYYYMMDD_HHMMSS}.wav, 16 kHz mono.
-
-Recording is off unless enabled, and a recorded call starts with a consent notice.
-"""
-
 from __future__ import annotations
 
 import wave
@@ -14,7 +9,6 @@ from telephony.logging_setup import get_logger
 
 log = get_logger("recorder")
 
-# Callers can't opt out mid-call (there is no keypad input), so the notice only informs.
 CONSENT_PROMPT_EN = (
     "Please note that this call is recorded for quality and training purposes. "
     "If you do not want to be recorded, you can end the call now."
@@ -26,8 +20,6 @@ CONSENT_PROMPT_HI = (
 
 
 class CallRecorder:
-    """Writes a call's audio to a WAV file; use it as a context manager."""
-
     def __init__(self, session_id: str) -> None:
         cfg = get_settings()
         self._enabled = cfg.enable_recordings
@@ -45,7 +37,7 @@ class CallRecorder:
         if self._enabled and self._path:
             self._wav = wave.open(str(self._path), "wb")
             self._wav.setnchannels(1)
-            self._wav.setsampwidth(2)  # int16
+            self._wav.setsampwidth(2)
             self._wav.setframerate(16000)
             log.info("recording_started", path=str(self._path))
         return self
@@ -54,7 +46,6 @@ class CallRecorder:
         self.close()
 
     def write(self, pcm: bytes) -> None:
-        """Append a raw PCM chunk to the recording."""
         if self._wav is not None and pcm:
             self._wav.writeframes(pcm)
 
@@ -73,5 +64,4 @@ class CallRecorder:
         return self._enabled
 
     def consent_prompt(self, language: str = "en") -> str:
-        """Return the consent prompt text in the caller's language."""
         return CONSENT_PROMPT_HI if language == "hi" else CONSENT_PROMPT_EN

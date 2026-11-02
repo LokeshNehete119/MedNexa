@@ -27,8 +27,8 @@ import { AlertCircle } from "lucide-react";
 interface HospitalInfoDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  entry?: HospitalInfoOut | null; // If editing
-  defaultCategory?: string; // Pre-select category when adding inline
+  entry?: HospitalInfoOut | null;
+  defaultCategory?: string;
   existingCategories: string[];
   onSuccess: () => void;
 }

@@ -1,5 +1,3 @@
-"""Speech detection with Silero VAD: when a caller starts and stops talking."""
-
 from __future__ import annotations
 
 from typing import Literal
@@ -11,7 +9,6 @@ from telephony.logging_setup import get_logger
 
 log = get_logger("vad")
 
-# Silero takes exactly 512 samples at 16 kHz (32 ms) per frame.
 FRAME_SAMPLES = 512
 FRAME_BYTES = FRAME_SAMPLES * 2
 
@@ -19,9 +16,7 @@ VadEvent = Literal["silence", "speech_start", "speech", "speech_end"]
 
 
 class SileroVAD:
-    """Speech/silence state for one call. The model itself is loaded once and shared."""
-
-    _model: object | None = None  # silero model (shared)
+    _model: object | None = None
     _utils: object | None = None
 
     @classmethod
@@ -35,7 +30,7 @@ class SileroVAD:
                 model="silero_vad",
                 force_reload=False,
                 onnx=False,
-                trust_repo=True,  # suppress interactive prompt (no stdin in Docker)
+                trust_repo=True,
             )
             model.eval()
             cls._model = model
@@ -56,7 +51,7 @@ class SileroVAD:
         self._speech_start_ms: float = 0.0
         self._silence_start_ms: float = 0.0
         self._elapsed_ms: float = 0.0
-        self._leftover: bytes = b""  # a partial frame, completed by the next chunk
+        self._leftover: bytes = b""
 
     def _ms_per_frame(self) -> float:
         return (FRAME_SAMPLES / self._sample_rate) * 1000
@@ -70,11 +65,6 @@ class SileroVAD:
         return confidence >= self._threshold
 
     def process_chunk(self, raw_bytes: bytes) -> list[VadEvent]:
-        """One event per complete 32 ms frame in a chunk of 16 kHz int16 PCM.
-
-        "speech_end" comes after ``vad_min_silence_ms`` of silence following at least
-        ``vad_min_speech_ms`` of speech; shorter pauses still count as "speech".
-        """
         events: list[VadEvent] = []
         buf = self._leftover + raw_bytes
 

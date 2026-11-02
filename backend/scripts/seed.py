@@ -1,12 +1,3 @@
-"""Seed a sample hospital: doctors, schedule overrides, FAQ entries and bookings.
-
-    uv run python -m scripts.seed           # skip if the sample hospital exists
-    uv run python -m scripts.seed --reset   # wipe all data first
-
-Everything goes through the service layer, so seeded data obeys the same rules
-as real bookings.
-"""
-
 import argparse
 import asyncio
 from datetime import date, time, timedelta
@@ -33,7 +24,6 @@ from app.services import (
 HOSPITAL_NAME = "MedNexa City Hospital"
 
 DOCTORS = [
-    # name, speciality, department, qualification, days, start, end, slot, cap
     ("Dr. Anil Sharma", "Cardiologist", "Cardiology", "MBBS, MD, DM (Cardiology)",
      [1, 2, 3, 4, 5], time(9), time(13), 15, 16),
     ("Dr. Meera Iyer", "Cardiologist", "Cardiology", "MBBS, MD, DNB (Cardiology)",
@@ -71,7 +61,7 @@ FAQ = [
 
 PATIENTS = [
     ("Rahul Kumar", "+919876543210", 34, "MALE"),
-    ("Sita Kumar", "+919876543210", 31, "FEMALE"),  # same phone, different patient
+    ("Sita Kumar", "+919876543210", 31, "FEMALE"),
     ("Priya Sharma", "+919812345678", 27, "FEMALE"),
     ("Mohan Lal", "+919900112233", 62, "MALE"),
 ]

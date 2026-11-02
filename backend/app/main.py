@@ -20,8 +20,6 @@ from app.services import call_service
 
 logger = logging.getLogger(__name__)
 
-# Staff search by phone (?phone=..., ?caller_phone=...); the access log keeps only the
-# last 4 digits of those numbers.
 _PHONE_QUERY = re.compile(r"((?:^|[?&])(?:caller_)?phone=)([^&]*)")
 
 
@@ -32,7 +30,6 @@ def _mask_digits(value: str) -> str:
 
 class MaskPhoneNumbersInAccessLog(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
-        # uvicorn.access args: (client_addr, method, path_with_query, http_version, status)
         args = record.args
         if isinstance(args, tuple) and len(args) >= 3 and isinstance(args[2], str):
             path = _PHONE_QUERY.sub(lambda m: m.group(1) + _mask_digits(m.group(2)), args[2])
@@ -42,14 +39,10 @@ class MaskPhoneNumbersInAccessLog(logging.Filter):
 
 logging.getLogger("uvicorn.access").addFilter(MaskPhoneNumbersInAccessLog())
 
-# A client-supplied id is only propagated if it is short and made of safe characters;
-# anything else (control characters, huge values) is replaced, so it can't pollute logs.
 _SAFE_CORRELATION_ID = re.compile(r"[A-Za-z0-9._-]{1,64}")
 
 
 class CorrelationIdMiddleware(BaseHTTPMiddleware):
-    """Injects or propagates X-Correlation-ID for distributed log tracing."""
-
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         supplied = request.headers.get("X-Correlation-ID", "")
         correlation_id = supplied if _SAFE_CORRELATION_ID.fullmatch(supplied) else str(uuid.uuid4())
@@ -59,7 +52,6 @@ class CorrelationIdMiddleware(BaseHTTPMiddleware):
 
 
 async def purge_old_calls_daily(days: int) -> None:
-    """Enforce the call-log retention period: once at startup, then every 24 hours."""
     while True:
         try:
             async with SessionFactory() as db:
@@ -72,8 +64,6 @@ async def purge_old_calls_daily(days: int) -> None:
 
 
 async def close_stale_calls_hourly() -> None:
-    """Calls cut off before they were ended (a restart, a crash) are closed: once at
-    startup, then every hour."""
     while True:
         try:
             async with SessionFactory() as db:
@@ -88,7 +78,7 @@ async def close_stale_calls_hourly() -> None:
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
-    settings.require_auth_config()  # refuse to start with unusable auth settings
+    settings.require_auth_config()
     tasks = [asyncio.create_task(close_stale_calls_hourly())]
     if settings.call_log_retention_days > 0:
         tasks.append(asyncio.create_task(purge_old_calls_daily(settings.call_log_retention_days)))

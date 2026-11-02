@@ -1,5 +1,3 @@
-"""JSON logs through structlog, with callers' phone numbers masked."""
-
 from __future__ import annotations
 
 import logging
@@ -12,11 +10,8 @@ import structlog
 
 from telephony.config import get_settings
 
-# Fields holding a caller's number, and free-text fields (what was said) that may
-# contain one. Numbers are logged with only their last 4 digits visible.
 _PHONE_FIELDS = {"caller", "caller_phone", "phone"}
 _TEXT_FIELDS = {"text", "response"}
-# 7+ digits, optionally with a leading + and single spaces/dashes between digits.
 _PHONE_NUMBER = re.compile(r"\+?\d(?:[ -]?\d){6,}")
 
 
@@ -28,7 +23,6 @@ def mask_phone(value: str) -> str:
 def redact_phone_numbers(
     _: Any, __: str, event: MutableMapping[str, Any]
 ) -> MutableMapping[str, Any]:
-    """structlog processor: never write a full phone number to the logs."""
     for key, value in event.items():
         if not isinstance(value, str):
             continue
@@ -61,7 +55,6 @@ def configure_logging() -> None:
             structlog.processors.JSONRenderer(),
         ],
         wrapper_class=structlog.make_filtering_bound_logger(level),
-        # add_logger_name needs a stdlib logger; PrintLogger has no name.
         logger_factory=structlog.stdlib.LoggerFactory(),
         cache_logger_on_first_use=True,
     )

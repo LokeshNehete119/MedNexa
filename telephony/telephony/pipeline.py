@@ -1,11 +1,3 @@
-"""One phone call: caller audio -> VAD -> Whisper -> agent -> TTS -> caller.
-
-The call handlers (Twilio media streams and the /call web page) feed audio into
-``CallPipeline.run`` and play back what it sends through ``send_audio``. A call must
-survive a failed speech, voice or model step: each is retried or answered with a short
-apology, and the call only ends when the caller or the agent ends it.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -33,32 +25,23 @@ ClearAudioFn = Callable[[], Awaitable[None]]
 TransferFn = Callable[[], Awaitable[bool]]
 EventFn = Callable[[dict[str, Any]], Awaitable[None]]
 
-# Pipeline audio: 16 kHz mono int16 -> 32000 bytes per second of playback.
 PCM_BYTES_PER_SECOND = 16000 * 2
 
-# Kept from before speech is detected: VAD needs a few frames to be sure, and without
-# them the first syllable of every sentence is cut off.
 PREROLL_BYTES = PCM_BYTES_PER_SECOND * 3 // 10
 
-# Shorter than this can't be words (a click or a cough).
 MIN_UTTERANCE_BYTES = PCM_BYTES_PER_SECOND * 3 // 10
 
-# 30 s of audio: an utterance is cut off here if VAD never hears it end.
 MAX_UTTERANCE_BYTES = PCM_BYTES_PER_SECOND * 30
 
-# Longest the end of a call waits for the caller to hear the last words.
 MAX_DRAIN_SECONDS = 20.0
 
-# The agent says these only in its final reply.
 _FAREWELL = re.compile(r"\bgood\s?-?bye\b|\bbye\b|अलविदा|धन्यवाद[\s,।!]*नमस्ते", re.IGNORECASE)
 
-# What Whisper writes for breathing, clicks or background noise: never a caller's words.
 _NOISE_TRANSCRIPT = re.compile(
     r"^[\W_]*(you|uh+|um+|hmm+|mm+|ah+|thanks for watching!?|subtitles by .*)?[\W_]*$",
     re.IGNORECASE,
 )
 
-# Phrases the pipeline says itself, by language.
 PHRASES: dict[str, dict[str, str]] = {
     "filler": {"en": "One moment, please.", "hi": "एक पल रुकिए।"},
     "repeat": {
@@ -88,8 +71,6 @@ PHRASES: dict[str, dict[str, str]] = {
 
 
 def fixed_phrases() -> dict[str, list[str]]:
-    """Everything said word for word, so it can be made before the first call and
-    still be played if the voice service can't be reached later."""
     phrases = {lang: [p[lang] for p in PHRASES.values()] for lang in ("en", "hi")}
     try:
         from agent.agent import RETRY, TROUBLE  # type: ignore[import-not-found]
@@ -105,17 +86,6 @@ def _phrase(key: str, language: str) -> str:
 
 
 class CallPipeline:
-    """One inbound call, from the greeting to the end of the call.
-
-    ``session_id`` is the backend call session the transcript is written to.
-    ``clear_audio`` drops audio already queued on the caller's side (barge-in),
-    ``transfer`` connects the caller to staff and returns False if it couldn't, and
-    ``on_event`` is sent {"state": "thinking" | "listening"}, {"transcript": {...}} for
-    each line said, and {"speak": text} when a reply couldn't be turned into audio, so a
-    client can show or voice it. ``language`` ("en" or "hi") fixes the call's language;
-    left unset, it is detected from every utterance.
-    """
-
     def __init__(
         self,
         session_id: str,
@@ -148,23 +118,20 @@ class CallPipeline:
         self._language: str = language or "en"
         self._language_chosen = language is not None
         if self._language_chosen and hasattr(self._agent, "fixed_language"):
-            self._agent.fixed_language = self._language  # greeting and replies stay in it
+            self._agent.fixed_language = self._language
         self._utterance_buf: bytearray = bytearray()
         self._preroll: deque[bytes] = deque()
         self._preroll_size = 0
-        # Audio is sent faster than real time and buffered by the telephony side,
-        # so "playing" lasts until the caller has actually heard it all.
         self._playback_until: float = 0.0
         self._barge_in_triggered = asyncio.Event()
         self._call_active = True
-        self._busy = False  # between the end of the caller's turn and the reply
-        self._unheard = 0  # utterances in a row that produced no words
+        self._busy = False
+        self._unheard = 0
         self._silence_prompted = False
         self._start_time: float = 0.0
         self._last_speech_time: float = 0.0
 
     async def run(self, audio_stream: AsyncIterator[bytes]) -> None:
-        """Returns when the caller hangs up, the call times out or the agent says goodbye."""
         self._start_time = time.monotonic()
         self._last_speech_time = self._start_time
 
@@ -189,7 +156,6 @@ class CallPipeline:
                     log.warning("call_timeout", session_id=self.session_id)
                     await self._say("timeout")
             finally:
-                # Also when the caller hangs up during the greeting: the call must be closed.
                 await self._finish()
 
     async def _process_stream(self, audio_stream: AsyncIterator[bytes]) -> None:
@@ -213,9 +179,6 @@ class CallPipeline:
                 if self._cfg.barge_in_enabled and self._is_playing():
                     await self._interrupt_playback()
 
-            # Keep each chunk once while an utterance is open. VAD works in 32 ms
-            # frames, so a short chunk can carry no event at all mid-utterance,
-            # and a long one can carry several.
             if speaking or utterance_ends or self._vad.in_speech:
                 if not self._utterance_buf:
                     self._utterance_buf.extend(b"".join(self._preroll))
@@ -232,9 +195,6 @@ class CallPipeline:
                 await self._process_utterance()
 
     async def _caller_went_quiet(self) -> bool:
-        """Ask "are you still there?" after half the silence timeout, and end the call after
-        the other half. Time counts from when the caller last spoke or the last reply
-        finished playing, so a long reply doesn't use up the caller's thinking time."""
         quiet_for = time.monotonic() - max(self._last_speech_time, self._playback_until)
         if quiet_for <= self._cfg.silence_timeout_seconds / 2:
             return False
@@ -250,14 +210,11 @@ class CallPipeline:
 
     @property
     def listening(self) -> bool:
-        """False while a reply is being worked out: audio arriving then is background
-        noise to the caller's finished turn, and the call handlers drop it. Audio is still
-        accepted once the call is over: reading the next chunk is how the loop notices."""
         return not self._busy
 
     async def _emit(self, event: dict[str, Any]) -> None:
         if self._on_event is not None:
-            with contextlib.suppress(Exception):  # the client may have gone
+            with contextlib.suppress(Exception):
                 await self._on_event(event)
 
     async def _process_utterance(self) -> None:
@@ -268,7 +225,6 @@ class CallPipeline:
         try:
             await self._respond()
         except Exception:
-            # Whatever failed, the caller is still on the line: say sorry and carry on.
             log.exception("turn_failed", session_id=self.session_id)
             await self._say("agent_failed")
         finally:
@@ -276,7 +232,6 @@ class CallPipeline:
             await self._emit({"state": "listening"})
 
     async def _respond(self) -> None:
-        """Transcribe the buffered utterance, call the agent, speak the response."""
         pcm = bytes(self._utterance_buf)
         self._utterance_buf.clear()
         self._vad.reset()
@@ -284,9 +239,7 @@ class CallPipeline:
             return
 
         t0 = time.monotonic()
-        # Level the whole utterance (not per chunk) so quiet lines transcribe well.
         pcm = normalise_audio(pcm)
-        # Whisper blocks: run it off the event loop so other calls keep flowing.
         hint = self._language if self._language_chosen else None
         prompt = getattr(self._agent, "speech_hints", None)
         try:
@@ -324,8 +277,6 @@ class CallPipeline:
         )
         await self._log("USER", text)
 
-        # The silence timer restarts around the reply, so a slow model or a long
-        # reply isn't counted as the caller going quiet.
         self._last_speech_time = time.monotonic()
         t1 = time.monotonic()
         response = await self._ask_agent(text)
@@ -348,7 +299,6 @@ class CallPipeline:
             self._call_active = False
 
     async def _ask_agent(self, text: str) -> str:
-        """The agent's reply. If it takes a while, tell the caller to hold on."""
         task = asyncio.create_task(self._agent.process(text, self._language))
         try:
             done, _ = await asyncio.wait({task}, timeout=self._cfg.thinking_filler_seconds)
@@ -363,18 +313,13 @@ class CallPipeline:
             return _phrase("agent_failed", self._language)
 
     async def _not_understood(self) -> None:
-        """Nothing usable was heard. One such utterance may be noise, so stay quiet; two in a
-        row means the caller is talking and not getting through."""
         self._unheard += 1
         if self._unheard >= 2:
             self._unheard = 0
             await self._say("repeat")
 
     async def _hand_over(self) -> None:
-        """The agent asked for a person: connect the caller to staff, or tell them how
-        to reach staff. Either way the AI's part of the call is over."""
         self._call_active = False
-        # Let the caller hear the agent's "please stay on the line" before moving the call.
         await asyncio.sleep(max(0.0, self._playback_until - time.monotonic()))
         if self._transfer is not None and await self._transfer():
             return
@@ -384,7 +329,6 @@ class CallPipeline:
         return time.monotonic() < self._playback_until
 
     async def _interrupt_playback(self) -> None:
-        """Stop the current reply: no more chunks, and drop what is already queued."""
         self._barge_in_triggered.set()
         self._playback_until = 0.0
         log.debug("barge_in", session_id=self.session_id)
@@ -411,7 +355,6 @@ class CallPipeline:
                 start = max(self._playback_until, time.monotonic())
                 self._playback_until = start + len(chunk) / PCM_BYTES_PER_SECOND
         except Exception:
-            # No voice: the call carries on, and a client that can speak gets the text.
             log.exception("tts_failed", session_id=self.session_id)
             await self._emit({"speak": text})
         finally:
@@ -424,8 +367,6 @@ class CallPipeline:
         await self._api.append_log(self.session_id, role, content)
 
     async def _finish(self) -> None:
-        """Let the caller hear the last words before the line closes, unless they hung up.
-        The call is always closed in the backend, even if this is cancelled while waiting."""
         try:
             task = asyncio.current_task()
             if not (task and task.cancelling()):
@@ -441,7 +382,6 @@ class CallPipeline:
         except Exception:
             log.exception("agent_summary_failed", session_id=self.session_id)
             summary = None
-        # The stub agent has no outcome of its own.
         await self._api.end_call(
             self.session_id,
             outcome=getattr(self._agent, "call_outcome", "OTHER"),
@@ -454,6 +394,4 @@ class CallPipeline:
 
     @staticmethod
     def _is_farewell(text: str) -> bool:
-        """Did the agent close the call? Only explicit closing phrases count: words
-        like "धन्यवाद" (thank you) or "take care" also occur mid-conversation."""
         return bool(_FAREWELL.search(text))

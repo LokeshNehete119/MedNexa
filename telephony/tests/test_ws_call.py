@@ -1,9 +1,3 @@
-"""The /ws/call handler, tested over a real WebSocket against a real server.
-
-The speech models, voice and backend are replaced by mocks (see conftest.py); the
-handler, pipeline and WebSocket protocol are the real ones.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -27,7 +21,6 @@ FRAME = b"\x01\x00" * 512
 
 @pytest.fixture()
 async def server(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[str]:
-    """The real app on a free port, with the backend client replaced."""
     import telephony.config as cfg_module
 
     monkeypatch.setattr(cfg_module._settings, "use_stub_agent", True)  # type: ignore[attr-defined]
@@ -61,7 +54,6 @@ def one_utterance_then_silence(vad: MagicMock) -> None:
 
 
 async def messages_until_closed(ws: websockets.ClientConnection, pace: float = 0.005) -> list:
-    """Send silence like a browser would, and collect everything the server sends."""
     got: list = []
 
     async def send() -> None:
@@ -90,8 +82,6 @@ async def test_the_server_ends_the_call_after_the_agent_says_goodbye(
     mock_recorder: MagicMock,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The caller stays on the line and says nothing more: the call must still end (it once
-    hung until the time limit, because audio was dropped after the goodbye)."""
     monkeypatch.setattr(StubAgent, "process", AsyncMock(return_value="Thank you. Goodbye."))
     one_utterance_then_silence(mock_vad)
 
@@ -101,7 +91,7 @@ async def test_the_server_ends_the_call_after_the_agent_says_goodbye(
     assert {"ended": True} in got
     lines = [m["transcript"] for m in got if isinstance(m, dict) and "transcript" in m]
     assert {"role": "assistant", "text": "Thank you. Goodbye."} in lines
-    assert any(isinstance(m, bytes) for m in got)  # the goodbye was sent as audio
+    assert any(isinstance(m, bytes) for m in got)
     mock_api.end_call.assert_awaited_once()
 
 
@@ -115,7 +105,7 @@ async def test_the_call_session_is_ended_when_the_caller_hangs_up(
     mock_recorder: MagicMock,
 ) -> None:
     async with websockets.connect(server + "?lang=en") as ws:
-        await ws.recv()  # the greeting's audio
+        await ws.recv()
         for _ in range(5):
             await ws.send(FRAME)
     for _ in range(100):
@@ -130,7 +120,7 @@ async def test_the_call_session_is_ended_when_the_caller_hangs_up(
 async def test_a_busy_line_turns_the_caller_away_politely(
     server: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(capacity.calls, "_active", 10)  # max_concurrent_calls
+    monkeypatch.setattr(capacity.calls, "_active", 10)
     async with websockets.connect(server) as ws:
         message = json.loads(await ws.recv())
         assert "busy" in message["error"]

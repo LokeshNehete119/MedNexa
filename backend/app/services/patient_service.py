@@ -17,7 +17,6 @@ from app.services.hospital_service import get_hospital
 async def find_patient(
     db: AsyncSession, hospital_id: uuid.UUID, phone: str, name: str
 ) -> Patient | None:
-    """Look up a patient by identity. `phone` must already be normalized."""
     return await db.scalar(
         select(Patient).where(
             Patient.hospital_id == hospital_id,
@@ -38,7 +37,6 @@ def _closeness(heard: str, stored: str) -> float:
     heard, stored = _letters(heard), _letters(stored)
     best = SequenceMatcher(None, heard, stored).ratio()
     if " " not in heard:
-        # A lone first or last name matches that part of a longer stored name.
         best = max(best, *(SequenceMatcher(None, heard, part).ratio() for part in stored.split()))
     return best
 
@@ -46,12 +44,6 @@ def _closeness(heard: str, stored: str) -> float:
 async def find_patient_by_sound(
     db: AsyncSession, hospital_id: uuid.UUID, phone: str, name: str
 ) -> Patient | None:
-    """The one patient on this phone whose name is close to the one heard, if any.
-
-    Speech recognition spells names differently from the booking ("Aasha" for "Asha"),
-    so an exact match alone leaves callers stuck. Only patients on the caller's own
-    number are considered, and an ambiguous match returns nothing.
-    """
     patients = await db.scalars(
         select(Patient).where(Patient.hospital_id == hospital_id, Patient.phone == phone)
     )
@@ -65,12 +57,6 @@ async def find_patient_by_sound(
 
 
 async def upsert_patient(db: AsyncSession, hospital_id: uuid.UUID, data: PatientIn) -> Patient:
-    """Return the patient with this identity, creating it if needed (does not commit).
-
-    Uses INSERT ... ON CONFLICT so two concurrent first bookings for the same new
-    patient don't fail on the identity constraint. Optional details provided now
-    fill in or update the stored ones; missing ones keep their stored value.
-    """
     values = insert(Patient).values(
         hospital_id=hospital_id,
         name=data.name,
@@ -96,9 +82,6 @@ async def upsert_patient(db: AsyncSession, hospital_id: uuid.UUID, data: Patient
     return patient
 
 
-# Staff / dashboard
-
-
 async def get_patient(db: AsyncSession, patient_id: uuid.UUID) -> Patient:
     patient = await db.get(Patient, patient_id)
     if patient is None:
@@ -118,7 +101,7 @@ async def create_patient(db: AsyncSession, data: PatientCreate) -> Patient:
     db.add(patient)
     try:
         await db.commit()
-    except IntegrityError as exc:  # lost a race with a concurrent create/booking
+    except IntegrityError as exc:
         await db.rollback()
         raise Conflict("A patient with this phone number and name already exists") from exc
     await db.refresh(patient)
@@ -134,7 +117,6 @@ async def search_patients(
     limit: int = 50,
     offset: int = 0,
 ) -> tuple[list[Patient], int]:
-    """`phone` must already be normalized; `name` matches by substring."""
     stmt = select(Patient)
     if hospital_id:
         stmt = stmt.where(Patient.hospital_id == hospital_id)
