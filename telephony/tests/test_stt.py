@@ -1,5 +1,3 @@
-"""Tests for the STT module (Faster-Whisper wrapper)."""
-
 from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
@@ -25,15 +23,11 @@ class TestLanguageNormalisation:
         assert FasterWhisperSTT._normalise_language("zh") == DEFAULT_LANGUAGE
 
     def test_hindi_prefix(self) -> None:
-        # Whisper sometimes returns "hindi" (full name)
         assert FasterWhisperSTT._normalise_language("hindi") == "hi"
 
 
 class TestTranscribeBytes:
-    """Test transcribe_bytes with a mocked Whisper model."""
-
     def _make_pcm(self, duration_s: float = 1.0) -> bytes:
-        """Generate silent PCM audio."""
         n = int(16000 * duration_s)
         return (np.zeros(n, dtype=np.int16)).tobytes()
 
@@ -45,7 +39,6 @@ class TestTranscribeBytes:
         assert result.confidence == 0.0
 
     def test_transcribe_mocked(self) -> None:
-        """Verify transcribe_bytes passes through model output correctly."""
         stt = FasterWhisperSTT.__new__(FasterWhisperSTT)
         stt._model_size = "base"
         stt._device = "cpu"
@@ -54,7 +47,6 @@ class TestTranscribeBytes:
         stt._vad_filter = False
         stt._model = None
 
-        # Build mock segment and info
         mock_segment = MagicMock()
         mock_segment.text = "  Hello, how can I help?  "
         mock_segment.avg_logprob = -0.1
@@ -84,7 +76,6 @@ class TestTranscribeBytes:
         assert result.confidence > 0
 
     def test_hindi_hint_preserved(self) -> None:
-        """Language hint should be passed through when provided."""
         stt = FasterWhisperSTT.__new__(FasterWhisperSTT)
         stt._model_size = "base"
         stt._device = "cpu"
@@ -121,7 +112,6 @@ class TestDeviceResolution:
 
     @staticmethod
     def _fake_torch(monkeypatch: pytest.MonkeyPatch, cuda: bool) -> None:
-        """A stand-in torch module, so these tests don't need the real (huge) package."""
         import sys
         import types
 
@@ -145,8 +135,6 @@ class TestDeviceResolution:
 
 
 class FakeWhisper:
-    """Stands in for faster_whisper.WhisperModel; records each transcribe call."""
-
     def __init__(self, detected: str, probs: list[tuple[str, float]] | None = None) -> None:
         self.detected = detected
         self.probs = probs or []
@@ -227,7 +215,6 @@ class TestSilenceAndNames:
         assert stt.transcribe_bytes(b"\x01\x00" * 16000).text == ""
 
     def test_low_confidence_speech_is_kept(self) -> None:
-        """A short real sentence can score badly without being noise (e.g. "just tomorrow")."""
         stt = self._stt([self._segment("just tomorrow.", -0.8, 0.05)])
         assert stt.transcribe_bytes(b"\x01\x00" * 16000).text == "just tomorrow."
 

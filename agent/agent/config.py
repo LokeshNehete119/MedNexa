@@ -6,9 +6,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class LLMMode(StrEnum):
-    AUTO = "auto"  # local first, cloud on slowness/failure (and for Hindi if enabled)
-    LOCAL = "local"  # never call the cloud (FORCE_LOCAL)
-    CLOUD = "cloud"  # never call the local model (FORCE_CLOUD)
+    AUTO = "auto"
+    LOCAL = "local"
+    CLOUD = "cloud"
 
 
 class CloudProvider(StrEnum):
@@ -21,45 +21,35 @@ class AgentSettings(BaseSettings):
 
     llm_mode: LLMMode = LLMMode.AUTO
 
-    # Local model (Ollama)
     ollama_url: str = "http://localhost:11434"
     local_model: str = "llama3.1:8b"
-    # Ollama's default context (4096 tokens) is smaller than the prompt plus a call's
-    # history, and Ollama silently drops the start of what doesn't fit.
     local_context_tokens: int = 8192
-    local_keep_alive: str = "1h"  # keep the model loaded between calls
+    local_keep_alive: str = "1h"
 
-    # Cloud model
     cloud_provider: CloudProvider = CloudProvider.GROQ
     cloud_model: str = "openai/gpt-oss-20b"
-    # Groq limits tokens per minute for each model separately: when the main model is
-    # rate limited, the next one here answers instead of waiting for the limit to reset.
     cloud_fallback_models: list[str] = []
-    # "low" makes reasoning models (gpt-oss) think briefly: faster, fewer tokens.
     cloud_reasoning_effort: str | None = None
     groq_api_key: SecretStr | None = None
     openai_api_key: SecretStr | None = None
-    # Any OpenAI-compatible service instead of OpenAI, e.g. https://api.featherless.ai/v1
     openai_base_url: str | None = None
 
-    # ModelRouter behaviour
-    max_latency_seconds: float = 3.0  # local call is abandoned for cloud after this
-    cloud_timeout_seconds: float = 40.0  # the whole answer, including retries and fallbacks
-    cloud_request_timeout_seconds: float = 10.0  # one request: a stalled one is retried
-    circuit_failure_threshold: int = 3  # consecutive local failures before skipping local
+    max_latency_seconds: float = 3.0
+    cloud_timeout_seconds: float = 40.0
+    cloud_request_timeout_seconds: float = 10.0
+    circuit_failure_threshold: int = 3
     circuit_open_seconds: float = 300.0
     hindi_prefers_cloud: bool = True
 
-    llm_retries: int = 2  # extra tries after a connection error or a 5xx from the model host
-    llm_retry_delay_seconds: float = 0.7  # doubled after each retry
+    llm_retries: int = 2
+    llm_retry_delay_seconds: float = 0.7
 
-    # Agent loop
     temperature: float = 0.2
-    handover_after_failures: int = 3  # failed turns in a row before the caller goes to staff
-    confirm_changes: bool = True  # bookings and changes need a second call, after a yes
-    max_tool_rounds: int = 4  # LLM <-> tool round trips per caller turn
-    max_history_messages: int = 40  # older turns are dropped from the LLM context
-    max_response_chars: int = 350  # replies are spoken; keep them very short
+    handover_after_failures: int = 3
+    confirm_changes: bool = True
+    max_tool_rounds: int = 4
+    max_history_messages: int = 40
+    max_response_chars: int = 350
 
 
 @lru_cache

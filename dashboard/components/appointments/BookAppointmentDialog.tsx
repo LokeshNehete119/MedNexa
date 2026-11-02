@@ -35,7 +35,6 @@ interface BookAppointmentDialogProps {
   onOpenChange: (open: boolean) => void;
   defaultDate?: string;
   defaultDoctorId?: string;
-  /** Pre-fills step 2 when booking for a patient who is already registered. */
   defaultPatient?: Pick<PatientOut, "name" | "phone" | "age" | "gender" | "email">;
   onSuccess: () => void;
 }
@@ -306,7 +305,7 @@ export function BookAppointmentDialog({
               <div className="p-3 bg-muted/30 border border-border rounded-lg text-xs flex items-center justify-between">
                 <div>
                   <span className="font-semibold text-foreground">{selectedDoctor.name}</span>
-                  <span className="text-muted-foreground"> — {selectedDoctor.department} ({selectedDoctor.qualification})</span>
+                  <span className="text-muted-foreground"> - {selectedDoctor.department} ({selectedDoctor.qualification})</span>
                 </div>
                 <Badge variant="outline" className="text-[11px]">
                   {selectedDoctor.slot_duration_minutes} min slots

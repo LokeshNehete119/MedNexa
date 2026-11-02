@@ -17,13 +17,13 @@ telephony/
 │   ├── config.py          # All settings (env-vars prefixed MEDNEXA_TEL_)
 │   ├── logging_setup.py   # structlog JSON logging
 │   ├── api_client.py      # backend calls: start, log and end a call
-│   ├── vad.py             # Silero VAD — speech/silence detection
+│   ├── vad.py             # Silero VAD, speech/silence detection
 │   ├── stt.py             # Faster-Whisper STT + language detection
 │   ├── tts.py             # Piper TTS (local) + Edge-TTS (cloud fallback)
 │   ├── audio_utils.py     # Noise suppression, gain normalisation
 │   ├── recording.py       # Call recorder (WAV files + consent prompt)
 │   ├── agent_interface.py # what the pipeline needs from an agent; StubAgent
-│   ├── pipeline.py        # CallPipeline — orchestrates the full call
+│   ├── pipeline.py        # CallPipeline, runs the full call
 │   ├── twilio_handler.py  # Twilio webhook + Media Streams WebSocket
 │   ├── call.html          # the /call test page
 │   └── main.py            # FastAPI app: /health, /call, /ws/call, Twilio routes
@@ -205,5 +205,5 @@ async def get_summary(self) -> str | None: ...
 pytest tests/ -v
 ```
 
-Tests use monkeypatching — no real Torch/Whisper/Piper needed.
+Tests use monkeypatching, so no real Torch/Whisper/Piper needed.
 

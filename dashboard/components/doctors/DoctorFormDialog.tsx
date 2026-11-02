@@ -21,7 +21,7 @@ import { Clock, Calendar, Check, AlertCircle } from "lucide-react";
 interface DoctorFormDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  doctor?: DoctorOut | null; // If passed, edit mode; else create mode
+  doctor?: DoctorOut | null;
   onSuccess: () => void;
 }
 
@@ -68,7 +68,6 @@ export function DoctorFormDialog({
   const [error, setError] = React.useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = React.useState(false);
 
-  // Initialize or reset form when modal opens or doctor changes
   React.useEffect(() => {
     if (doctor) {
       setName(doctor.name);
@@ -120,7 +119,6 @@ export function DoctorFormDialog({
     e.preventDefault();
     setError(null);
 
-    // Validation
     if (!name.trim()) {
       setError("Doctor name is required");
       return;

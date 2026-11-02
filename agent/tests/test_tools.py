@@ -147,7 +147,6 @@ async def test_tools_needing_caller_id_fail_without_it(ctx, seed) -> None:
 
 @pytest.fixture
 async def other_hospital_ctx(ctx, session_factory) -> ToolContext:
-    """A call coming in on a second hospital's line, from the same caller."""
     async with session_factory() as db:
         other = await hospital_service.create_hospital(
             db,
@@ -203,7 +202,6 @@ async def test_transfer_is_immediate_when_the_caller_asks_for_a_person(ctx, said
 
 
 async def test_a_spurious_transfer_asks_the_caller_first(ctx) -> None:
-    """A model once transferred a caller who had only said "hello, good morning"."""
     ctx.confirm_changes = True
     ctx.last_caller_text = "Hello, good morning."
     ctx.turn = 1
@@ -212,7 +210,6 @@ async def test_a_spurious_transfer_asks_the_caller_first(ctx) -> None:
     assert first["readback"] == "Would you like me to connect you to one of our staff?"
     assert ctx.escalation_reason is None
 
-    # The question is asked (the graph does this), and the caller agrees in a later turn.
     ctx.readback_spoken, ctx.turn, ctx.last_caller_text = True, 2, "Yes, please."
     second = await execute_tool(ctx, "transfer_to_human", {"reason": "greeting only"})
     assert second["ok"] and ctx.escalation_reason == "greeting only"

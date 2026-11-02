@@ -1,5 +1,3 @@
-"""The backend calls the telephony service makes: starting, logging and ending calls."""
-
 from __future__ import annotations
 
 import asyncio
@@ -16,11 +14,6 @@ POST_RETRIES = 3
 
 
 class BackendClient:
-    """Async HTTP client for the MedNexa backend.
-
-    Use as an async context manager or call ``aclose()`` when done.
-    """
-
     def __init__(self, base_url: str | None = None, timeout: float = 10.0) -> None:
         settings = get_settings()
         self._base = (base_url or settings.backend_url).rstrip("/")
@@ -39,8 +32,6 @@ class BackendClient:
         await self.aclose()
 
     async def _post(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
-        """POST, trying again after a network error or a 5xx: a brief outage must not lose
-        a transcript line or leave a finished call open."""
         url = f"/api/v1{path}"
         for attempt in range(1 + POST_RETRIES):
             try:
@@ -59,7 +50,6 @@ class BackendClient:
         raise RuntimeError("unreachable")  # pragma: no cover
 
     async def start_call(self, hospital_id: str, caller_phone: str) -> str:
-        """Returns the new call session's id."""
         data = await self._post(
             "/calls",
             {"hospital_id": hospital_id, "caller_phone": caller_phone},
@@ -78,7 +68,6 @@ class BackendClient:
         tool_result: str | None = None,
         appointment_id: str | None = None,
     ) -> None:
-        """``role`` is USER, ASSISTANT, TOOL or SYSTEM."""
         body: dict[str, Any] = {"role": role.upper(), "content": content}
         if tool_called:
             body["tool_called"] = tool_called
@@ -89,7 +78,6 @@ class BackendClient:
         try:
             await self._post(f"/calls/{session_id}/logs", body)
         except Exception as exc:
-            # A transcript line that can't be saved must not end the call.
             log.warning("append_log_failed", session_id=session_id, error=str(exc))
 
     async def end_call(
@@ -101,8 +89,6 @@ class BackendClient:
         language_detected: str | None = None,
         escalated_to_human: bool = False,
     ) -> None:
-        """``outcome`` is BOOKED, CANCELLED, RESCHEDULED, INFO_PROVIDED, ESCALATED,
-        ABANDONED or OTHER."""
         body: dict[str, Any] = {
             "call_outcome": outcome,
             "escalated_to_human": escalated_to_human,
@@ -118,7 +104,6 @@ class BackendClient:
             log.warning("end_call_failed", session_id=session_id, error=str(exc))
 
     async def health_check(self) -> bool:
-        """Return True if the backend is reachable and healthy."""
         try:
             resp = await self._client.get("/api/v1/health")
             return resp.status_code == 200

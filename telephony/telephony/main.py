@@ -1,9 +1,3 @@
-"""Telephony server: Twilio webhooks and media streams, the /call test page and its
-WebSocket, and a health check.
-
-    uvicorn telephony.main:app --host 0.0.0.0 --port 8001
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -28,7 +22,6 @@ from telephony.tts import TTSEngine
 from telephony.twilio_handler import router as twilio_router
 from telephony.vad import SileroVAD
 
-# Before the first log call, which happens at import time in some modules.
 configure_logging()
 log = get_logger("main")
 
@@ -37,15 +30,12 @@ CALL_PAGE = Path(__file__).with_name("call.html")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:  # type: ignore[type-arg]
-    """Load the speech models before the first call, not during it."""
     cfg = get_settings()
     log.info("telephony_starting", host=cfg.server_host, port=cfg.server_port)
 
     log.info("preloading_models")
     SileroVAD._load_model()
     await asyncio.to_thread(FasterWhisperSTT().warm_up)
-    # Made in the background: fixed phrases are then ready even if the voice service
-    # can't be reached later, and the first call doesn't wait for them.
     prewarm = asyncio.create_task(TTSEngine().prewarm(fixed_phrases()))
 
     if not cfg.hospital_id:
@@ -119,20 +109,10 @@ def create_app() -> FastAPI:
 
     @app.websocket("/ws/call")
     async def ws_call(websocket: WebSocket) -> None:
-        """A call over a WebSocket, used by the /call page.
-
-        Both directions carry 16 kHz mono int16 PCM as binary frames. The server also
-        sends JSON text frames: {"state": "thinking" | "listening"} as the turn changes,
-        {"transcript": {"role", "text"}} for each line said, {"speak": text} when a reply
-        couldn't be turned into audio, {"error": text} if the call can't start, and
-        {"ended": true} when the server ends the call. The call starts on connect and ends
-        on disconnect.
-        """
         if not get_settings().web_call_enabled:
             await websocket.close(code=1008)
             return
         await websocket.accept()
-        # Without ?phone=..., the call is logged as from a withheld number.
         caller_phone = websocket.query_params.get("phone", "anonymous")
         language = websocket.query_params.get("lang")
         language = language if language in ("en", "hi") else None
@@ -176,8 +156,8 @@ async def _run_ws_call(websocket: WebSocket, caller_phone: str, language: str | 
                 if not chunk:
                     break
                 if not pipeline.listening:
-                    continue  # noise while the reply is worked out
-                if audio_queue.full():  # drop the oldest chunk rather than stall
+                    continue
+                if audio_queue.full():
                     audio_queue.get_nowait()
                 audio_queue.put_nowait(chunk)
         except WebSocketDisconnect:
@@ -195,7 +175,7 @@ async def _run_ws_call(websocket: WebSocket, caller_phone: str, language: str | 
             yield chunk
 
     async def send_audio(pcm: bytes) -> None:
-        with contextlib.suppress(Exception):  # client may have disconnected
+        with contextlib.suppress(Exception):
             await websocket.send_bytes(pcm)
 
     async def send_event(event: dict[str, Any]) -> None:
@@ -210,14 +190,11 @@ async def _run_ws_call(websocket: WebSocket, caller_phone: str, language: str | 
     done, pending = await asyncio.wait([recv_task, pipe_task], return_when=asyncio.FIRST_COMPLETED)
     for task in pending:
         task.cancel()
-    # Wait for the cancelled pipeline to close the call properly (it ends the call
-    # session in the backend) before this handler returns.
     await asyncio.gather(*pending, return_exceptions=True)
     for task in done:
         if not task.cancelled() and task.exception() is not None:
             log.error("ws_call_task_failed", error=repr(task.exception()))
     if pipe_task in done:
-        # The server ended the call, rather than the caller: say so, then close properly.
         with contextlib.suppress(Exception):
             await send_event({"ended": True})
             await websocket.close()

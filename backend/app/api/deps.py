@@ -34,7 +34,7 @@ def _staff_from(credentials: HTTPAuthorizationCredentials | None) -> dict[str, A
         return decode_access_token(credentials.credentials)
     except ValueError as exc:
         raise _unauthorized(f"Invalid authentication token: {exc}") from exc
-    except RuntimeError as exc:  # server misconfiguration: never accept anything
+    except RuntimeError as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Authentication unavailable"
         ) from exc

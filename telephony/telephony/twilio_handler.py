@@ -1,10 +1,3 @@
-"""Phone calls through Twilio.
-
-Twilio posts each incoming call to /twilio/voice, which answers with TwiML that opens a
-media stream to /twilio/stream/{call_sid}. That WebSocket carries 8 kHz mu-law audio
-both ways; it is converted to and from the pipeline's 16 kHz PCM.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -33,10 +26,6 @@ log = get_logger("twilio")
 
 router = APIRouter(prefix="/twilio", tags=["twilio"])
 
-# The voice webhook is signed by Twilio (validated below). It hands out a one-time
-# token inside the TwiML; the media WebSocket must present it in the stream's
-# "start" message. The caller's number is taken from the signed webhook, never
-# from the WebSocket, so a client that opens the socket directly gets nothing.
 
 STREAM_TOKEN_TTL_SECONDS = 60.0
 
@@ -62,7 +51,6 @@ def _issue_stream_token(call_sid: str, caller_phone: str) -> str:
 
 
 def _claim_stream_token(token: str | None, call_sid: str) -> PendingStream | None:
-    """Single use: the token is removed whether or not it is still valid."""
     pending = _pending_streams.pop(token or "", None)
     if pending is None or pending.call_sid != call_sid:
         return None
@@ -94,10 +82,6 @@ def build_twiml(call_sid: str, public_url: str, caller_phone: str, stream_token:
 
 
 async def transfer_to_staff(call_sid: str) -> bool:
-    """Connect the live call to the staff number (this ends the media stream).
-
-    Returns False, leaving the call alone, when no transfer number or Twilio
-    credentials are configured or Twilio rejects the request."""
     cfg = get_settings()
     if not (cfg.transfer_phone_number and cfg.twilio_account_sid and cfg.twilio_auth_token):
         return False
@@ -114,13 +98,11 @@ async def transfer_to_staff(call_sid: str) -> bool:
 
 @router.post("/voice", response_model=None)
 async def voice_webhook(request: Request) -> Response:
-    """With an auth token configured, requests without a valid Twilio signature are refused."""
     form = await request.form()
     params = {key: str(value) for key, value in form.items()}
     cfg = get_settings()
 
     if cfg.twilio_auth_token:
-        # Twilio signs the exact URL it was configured with (the public one).
         url = f"{cfg.public_url.rstrip('/')}/twilio/voice" if cfg.public_url else str(request.url)
         signature = request.headers.get("X-Twilio-Signature", "")
         if not _signature_valid(url, params, signature):
@@ -142,7 +124,7 @@ async def voice_webhook(request: Request) -> Response:
         return PlainTextResponse(content=busy, media_type="text/xml")
 
     if not cfg.public_url:
-        log.error("public_url_not_set")  # answer anyway, or Twilio keeps retrying
+        log.error("public_url_not_set")
     token = _issue_stream_token(call_sid, caller_phone)
     twiml = build_twiml(call_sid, cfg.public_url or "http://localhost:8001", caller_phone, token)
     return PlainTextResponse(content=twiml, media_type="text/xml")
@@ -161,7 +143,6 @@ async def stream_websocket(websocket: WebSocket, call_sid: str) -> None:
 
 
 async def _serve_stream(websocket: WebSocket, call_sid: str) -> None:
-    """Twilio sends "start" (stream details), "media" (base64 audio) and "stop" messages."""
     cfg = get_settings()
     caller_phone = ""
     stream_sid: str | None = None
@@ -197,9 +178,9 @@ async def _serve_stream(websocket: WebSocket, call_sid: str) -> None:
                 elif event == "media" and stream_sid is not None:
                     payload = msg.get("media", {}).get("payload", "")
                     if pipeline is not None and not pipeline.listening:
-                        continue  # noise while the reply is worked out
+                        continue
                     pcm_16k = twilio_to_pipeline(base64.b64decode(payload))
-                    if audio_queue.full():  # drop the oldest chunk rather than stall
+                    if audio_queue.full():
                         audio_queue.get_nowait()
                     audio_queue.put_nowait(pcm_16k)
 
@@ -212,7 +193,7 @@ async def _serve_stream(websocket: WebSocket, call_sid: str) -> None:
         finally:
             if audio_queue.full():
                 audio_queue.get_nowait()
-            audio_queue.put_nowait(b"")  # tells the pipeline the caller is gone
+            audio_queue.put_nowait(b"")
 
     async def audio_generator() -> AsyncIterator[bytes]:
         while True:
@@ -222,16 +203,15 @@ async def _serve_stream(websocket: WebSocket, call_sid: str) -> None:
             yield chunk
 
     async def send_json(message: dict[str, object]) -> None:
-        with contextlib.suppress(Exception):  # connection may have closed
+        with contextlib.suppress(Exception):
             await websocket.send_text(json.dumps(message))
 
     async def send_audio(pcm_16k: bytes) -> None:
         payload = base64.b64encode(pipeline_to_twilio(pcm_16k)).decode("ascii")
         await send_json({"event": "media", "streamSid": stream_sid, "media": {"payload": payload}})
 
-    # The pipeline needs the call session, created when the "start" message arrives.
     receive_task = asyncio.create_task(receive_loop())
-    for _ in range(50):  # up to 5 seconds
+    for _ in range(50):
         await asyncio.sleep(0.1)
         if session_id is not None or rejected.is_set() or receive_task.done():
             break
@@ -244,7 +224,6 @@ async def _serve_stream(websocket: WebSocket, call_sid: str) -> None:
         return
 
     async def clear_audio() -> None:
-        """Drop audio Twilio has queued but not played yet, when the caller interrupts."""
         await send_json({"event": "clear", "streamSid": stream_sid})
 
     async def transfer() -> bool:
@@ -262,7 +241,6 @@ async def _serve_stream(websocket: WebSocket, call_sid: str) -> None:
     )
     for task in pending:
         task.cancel()
-    # Wait for the cancelled pipeline to end the call session before this handler returns.
     await asyncio.gather(*pending, return_exceptions=True)
     for task in done:
         if not task.cancelled() and task.exception() is not None:

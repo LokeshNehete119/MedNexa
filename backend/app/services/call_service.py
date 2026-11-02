@@ -1,5 +1,3 @@
-"""Call session and transcript storage (written by the call pipeline)."""
-
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -19,15 +17,12 @@ from app.schemas.call import (
 from app.services.common import paginate
 from app.services.hospital_service import get_hospital
 
-# Turns that count towards total_turns (tool/system entries are bookkeeping).
 _CONVERSATION_ROLES = {CallRole.USER, CallRole.ASSISTANT}
 
 
 async def _get_session(
     db: AsyncSession, session_id: uuid.UUID, *, lock: bool = False
 ) -> CallSession:
-    """With lock=True the row is locked (FOR UPDATE) until commit, so appending a
-    log and ending the call can't interleave and leave logs on an ended call."""
     session = await db.get(CallSession, session_id, with_for_update=lock, populate_existing=lock)
     if session is None:
         raise NotFound("Call session not found")
@@ -80,8 +75,6 @@ async def end_call(db: AsyncSession, session_id: uuid.UUID, data: CallSessionEnd
 
 
 async def purge_calls_older_than(db: AsyncSession, days: int) -> int:
-    """Delete call sessions (and, by cascade, their logs) that started more than
-    `days` days ago. Returns how many sessions were deleted."""
     if days < 1:
         raise ValueError("days must be at least 1")
     cutoff = datetime.now(UTC) - timedelta(days=days)
@@ -91,10 +84,6 @@ async def purge_calls_older_than(db: AsyncSession, days: int) -> int:
 
 
 async def close_stale_calls(db: AsyncSession, minutes: int = 30) -> int:
-    """End calls that were never ended, e.g. when the telephony service was restarted or
-    crashed mid-call: they would show "still on the line" forever. A call can't last this
-    long (the telephony limit is 10 minutes), so one still open is one that was cut off.
-    The end is the last thing said, or the start if nothing was. Returns how many."""
     cutoff = datetime.now(UTC) - timedelta(minutes=minutes)
     last_said = (
         select(func.max(CallLog.timestamp)).where(CallLog.session_id == CallSession.id)
@@ -132,7 +121,6 @@ async def list_calls(
         stmt = stmt.where(CallSession.call_outcome == outcome)
     if escalated is not None:
         stmt = stmt.where(CallSession.escalated_to_human == escalated)
-    # Datetime bounds (not dates) so the dashboard decides the day boundary's timezone.
     if started_after:
         stmt = stmt.where(CallSession.call_start >= started_after)
     if started_before:

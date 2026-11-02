@@ -1,11 +1,3 @@
-"""Speech to text with Faster-Whisper.
-
-Unless a language is given, Whisper detects it for every utterance, so callers can
-switch mid-call. Whisper often labels spoken Hindi as Urdu, so "ur" counts as Hindi;
-any other language is transcribed again as whichever of English or Hindi it rated
-more likely.
-"""
-
 from __future__ import annotations
 
 import threading
@@ -22,23 +14,18 @@ log = get_logger("stt")
 
 SUPPORTED_LANGUAGES = {"en", "hi"}
 DEFAULT_LANGUAGE = "en"
-# Whisper codes that mean one of our languages.
 _LANGUAGE_ALIASES = {"hi": "hi", "ur": "hi", "en": "en"}
 
 
 @dataclass
 class TranscriptionResult:
     text: str
-    language: str  # normalised: "en" or "hi"
-    confidence: float  # average log-prob converted to [0, 1]
+    language: str
+    confidence: float
     duration_seconds: float
 
 
 class FasterWhisperSTT:
-    """Whisper speech recognition. The model downloads on first use and is shared
-    by all calls in the process."""
-
-    # One model per (size, device, compute type), shared by every call in the process.
     _models: dict[tuple[str, str, str], Any] = {}
     _models_lock = threading.Lock()
 
@@ -49,7 +36,7 @@ class FasterWhisperSTT:
         self._compute_type = cfg.whisper_compute_type
         self._beam_size = cfg.whisper_beam_size
         self._vad_filter = cfg.whisper_vad_filter
-        self._model: Any = None  # lazy-loaded
+        self._model: Any = None
 
     @staticmethod
     def _resolve_device(device: str) -> str:
@@ -89,9 +76,6 @@ class FasterWhisperSTT:
         language_hint: str | None = None,
         prompt: str | None = None,
     ) -> TranscriptionResult:
-        """16 kHz mono int16 PCM to text. Blocking: call it from a worker thread.
-        ``language_hint`` ("en"/"hi") skips language detection; ``prompt`` is text that
-        makes the names in it more likely to be heard correctly."""
         if not audio_bytes:
             return self._empty(language_hint)
         self._load()
@@ -99,7 +83,6 @@ class FasterWhisperSTT:
         return self._transcribe_array(samples, language_hint=language_hint, prompt=prompt)
 
     def warm_up(self) -> None:
-        """The first transcription is much slower than the rest; do one before any call."""
         self._load()
         noise = np.random.default_rng(0).standard_normal(16000 * 2).astype(np.float32) * 0.01
         segments, _ = self._model.transcribe(noise, language="en", vad_filter=False)
@@ -133,15 +116,12 @@ class FasterWhisperSTT:
         segments, info = self._run(samples, forced, prompt)
         language = forced or _LANGUAGE_ALIASES.get((info.language or "").lower())
         if language is None:
-            # Detected something we don't support: redo it as the likelier of en/hi.
             language = self._likelier_supported(info)
             segments, info = self._run(samples, language, prompt)
 
-        # Whisper's own test for a segment that is silence or noise, not speech.
         segments = [s for s in segments if not (s.no_speech_prob > 0.6 and s.avg_logprob < -1.0)]
         text = " ".join(s.text.strip() for s in segments if s.text.strip())
         avg_logprob = sum(s.avg_logprob for s in segments) / len(segments) if segments else -1.0
-        # Rough confidence: the average log-probability (at most 0) shifted into [0, 1].
         confidence = float(min(1.0, max(0.0, 1.0 + avg_logprob)))
         duration = float(info.duration) if hasattr(info, "duration") else len(samples) / 16000.0
 
@@ -192,7 +172,6 @@ class FasterWhisperSTT:
 
     @staticmethod
     def _normalise_language(raw: str | None) -> str:
-        """Map Whisper's language code to 'en' or 'hi'."""
         if raw is None:
             return DEFAULT_LANGUAGE
         lang = raw.lower()

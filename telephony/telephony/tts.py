@@ -1,10 +1,3 @@
-"""Text to speech: Piper (local) or Microsoft Edge voices (online), as 16 kHz mono PCM.
-
-Piper needs its binary (https://github.com/rhasspy/piper/releases) on PATH or in
-MEDNEXA_TEL_PIPER_BINARY, and .onnx voices in MEDNEXA_TEL_PIPER_MODELS_DIR. Without
-them, or if Piper fails, the Edge voices are used.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -26,12 +19,10 @@ log = get_logger("tts")
 SAMPLE_RATE = 16000
 SAMPLE_WIDTH = 2
 
-# Used when a Piper voice has no readable .onnx.json (the rate of *-medium voices).
 PIPER_DEFAULT_RATE = 22050
 
 WAV_HEADER_BYTES = 44
 
-# Audio is sent to the caller in 100 ms chunks.
 CHUNK_MS = 100
 CHUNK_SAMPLES = SAMPLE_RATE * CHUNK_MS // 1000
 CHUNK_BYTES = CHUNK_SAMPLES * SAMPLE_WIDTH
@@ -53,7 +44,6 @@ class PiperTTS:
 
     @staticmethod
     def _voice_sample_rate(voice: Path) -> int:
-        """Native output rate of a Piper voice, from its <voice>.onnx.json config."""
         config = voice.with_name(voice.name + ".json")
         try:
             return int(json.loads(config.read_text())["audio"]["sample_rate"])
@@ -81,7 +71,7 @@ class PiperTTS:
             self._binary,
             "--model",
             str(voice),
-            "--output-raw",  # raw PCM output
+            "--output-raw",
         ]
         proc = await asyncio.create_subprocess_exec(
             *cmd,
@@ -92,8 +82,6 @@ class PiperTTS:
         raw_out, raw_err = await proc.communicate(input=text.encode("utf-8"))
         if proc.returncode != 0:
             raise RuntimeError(f"Piper failed: {raw_err.decode()}")
-        # piper --output-raw produces raw s16le PCM (no header) at the voice's own
-        # rate (22050 Hz for *-medium voices); the pipeline plays 16 kHz.
         return resample(raw_out, self._voice_sample_rate(voice), SAMPLE_RATE)
 
     async def async_synthesize(self, text: str, language: str = "en") -> AsyncIterator[bytes]:
@@ -103,8 +91,6 @@ class PiperTTS:
 
 
 class EdgeTTS:
-    """Microsoft Edge neural voices. They return MP3, which needs ffmpeg to decode."""
-
     def __init__(self) -> None:
         cfg = get_settings()
         self._voices: dict[str, str] = {
@@ -127,7 +113,6 @@ class EdgeTTS:
         mp3_data = b"".join(mp3_chunks)
         if not mp3_data:
             return b""
-        # Decoding runs ffmpeg: keep it off the event loop, which carries every live call.
         return await asyncio.to_thread(_decode_mp3, mp3_data)
 
     async def async_synthesize(self, text: str, language: str = "en") -> AsyncIterator[bytes]:
@@ -137,7 +122,6 @@ class EdgeTTS:
 
 
 def _decode_mp3(mp3: bytes) -> bytes:
-    """MP3 to 16 kHz mono int16 PCM with ffmpeg (pydub can't be imported on Python 3.13+)."""
     result = subprocess.run(
         ["ffmpeg", "-v", "error", "-i", "pipe:0", "-f", "s16le", "-ac", "1", "-ar", "16000", "-"],
         input=mp3,
@@ -150,8 +134,6 @@ def _decode_mp3(mp3: bytes) -> bytes:
 
 
 def trim_silence(pcm: bytes, lead: float = 0.04, tail: float = 0.15) -> bytes:
-    """Cut the silence TTS services put around every sentence (about a second in all), keeping
-    a short natural gap, so sentences run on and replies start sooner."""
     samples = np.frombuffer(pcm[: len(pcm) // 2 * 2], dtype=np.int16)
     if samples.size == 0:
         return pcm
@@ -167,19 +149,15 @@ async def _retry_pause(attempt: int) -> None:
     await asyncio.sleep(0.4 * (attempt + 1))
 
 
-class TTSUnavailable(RuntimeError):
-    """No voice could produce the audio, even after retrying."""
+class TTSUnavailable(RuntimeError): ...
 
 
 _SENTENCE_END = re.compile(r"(?<=[.!?।])\s+")
 
-# A full stop after these (or after a single initial, "A. Sharma") isn't the end of a sentence.
 _ABBREVIATION = re.compile(r"(?:^|\s)(?:dr|mr|mrs|ms|prof|st|no|vs|a\.m|p\.m|[A-Za-z])\.$", re.I)
 
 
 def split_sentences(text: str, min_chars: int = 30, max_parts: int = 4) -> list[str]:
-    """Sentences to synthesise separately, so the first can play while the rest are made.
-    Short ones are joined to their neighbour, and there are never more than `max_parts`."""
     parts: list[str] = []
     for sentence in _SENTENCE_END.split(text.strip()):
         if not sentence:
@@ -195,14 +173,6 @@ def split_sentences(text: str, min_chars: int = 30, max_parts: int = 4) -> list[
 
 
 class TTSEngine:
-    """Piper when it is set up (checked once), otherwise or on failure Edge.
-
-    Replies are spoken a sentence at a time, all made in parallel, so a long reply starts
-    playing after its first sentence. Network failures are retried, and sentences already
-    made are remembered (shared by all calls), so fixed phrases keep working briefly when
-    the voice service can't be reached.
-    """
-
     _cache: OrderedDict[tuple[str, str], bytes] = OrderedDict()
 
     def __init__(self) -> None:
@@ -236,7 +206,6 @@ class TTSEngine:
         return await self._edge.synthesize(text, language)
 
     async def speak(self, text: str, language: str = "en") -> bytes:
-        """Raw PCM for `text`; retried on failure, raising TTSUnavailable if it keeps failing."""
         if not re.search(r"\w", text):
             return b""
         key = (language, text)
@@ -261,7 +230,6 @@ class TTSEngine:
         raise TTSUnavailable(f"speech synthesis failed: {last!r}") from last
 
     async def stream(self, text: str, language: str = "en") -> AsyncIterator[bytes]:
-        """PCM chunks, starting as soon as the first sentence is ready."""
         tasks = [asyncio.create_task(self.speak(p, language)) for p in split_sentences(text)]
         try:
             for task in tasks:
@@ -274,7 +242,6 @@ class TTSEngine:
             await asyncio.gather(*tasks, return_exceptions=True)
 
     async def prewarm(self, phrases: dict[str, list[str]]) -> int:
-        """Make and remember fixed phrases ({language: [text, ...]}); returns how many worked."""
         done = 0
         for language, texts in phrases.items():
             for text in texts:

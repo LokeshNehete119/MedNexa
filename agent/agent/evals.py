@@ -1,19 +1,3 @@
-"""Agent evaluation harness: scripted caller conversations run against
-the configured *real* LLM and a seeded database, checked on what the agent did.
-
-    cd backend && uv run python -m scripts.seed --reset    # fresh sample data
-    cd agent   && uv run python -m agent.evals             # all scenarios
-    cd agent   && uv run python -m agent.evals booking_en  # one scenario
-
-Each scenario is a list of caller lines plus checks on the outcome: which tools
-were called, whether an action succeeded, and the call outcome. The report shows
-pass/fail, per-turn latency and the provider used. Write actions are rolled back
-afterwards by cancelling anything the scenario booked.
-
-The unit tests exercise this harness with a scripted LLM; these scenarios are meant
-for comparing models and prompts (e.g. llama3.1:8b vs a cloud model) by hand.
-"""
-
 import argparse
 import asyncio
 import time
@@ -28,7 +12,7 @@ from agent.agent import MedNexaAgent
 from agent.chat import first_active_hospital
 from agent.events import CallEvents
 
-Check = Callable[[MedNexaAgent], str | None]  # returns a failure message, or None
+Check = Callable[[MedNexaAgent], str | None]
 
 
 def called(tool: str) -> Check:
@@ -156,7 +140,6 @@ async def run_scenario(
 
 
 async def undo_bookings(events: CallEvents) -> None:
-    """Cancel what a scenario booked so repeated runs start from the same data."""
     async with SessionFactory() as db:
         for event in events.succeeded("book") + events.succeeded("reschedule"):
             await appointment_service.cancel_appointment_by_staff(

@@ -1,16 +1,3 @@
-"""The LangGraph agent graph.
-
-    START -> agent --(tool calls)--> tools -> agent ...
-                 \\--(final text)---> guardrail -> END
-
-- agent:     system prompt (rebuilt each step with the current language and time)
-             + recent history -> ModelRouter -> AIMessage
-- tools:     runs every requested tool call against the service layer
-- guardrail: validates the final reply (agent/guardrails.py) and replaces it if needed
-
-Conversation memory is kept per call by the checkpointer (thread_id = call id).
-"""
-
 import json
 from collections.abc import Awaitable, Callable, Sequence
 from typing import Annotated, Any, TypedDict
@@ -47,8 +34,6 @@ class AgentState(TypedDict):
 
 
 def recent_history(messages: Sequence[BaseMessage], limit: int) -> list[BaseMessage]:
-    """The last `limit` messages, never starting with a tool result or a tool-calling
-    message, so no tool result is separated from the request that produced it."""
 
     def orphaned(m: BaseMessage) -> bool:
         return isinstance(m, ToolMessage) or (isinstance(m, AIMessage) and bool(m.tool_calls))
@@ -79,7 +64,7 @@ def build_graph(
             messages.append(SystemMessage(FINAL_ANSWER_NOTE))
             tools = []
         reply = await router.ainvoke(messages, tools, language=language)
-        if not tools and reply.tool_calls:  # model ignored the limit: drop the calls
+        if not tools and reply.tool_calls:
             reply = AIMessage(content=reply.content, id=reply.id)
         return {"messages": [reply]}
 
@@ -101,8 +86,6 @@ def build_graph(
     async def guardrail_node(state: AgentState) -> dict[str, Any]:
         last = state["messages"][-1]
         if ctx.readback is not None:
-            # A change was only checked: the caller is asked, word for word, whatever the
-            # model wrote. (Same id -> the history matches what was spoken.)
             ctx.readback_spoken = True
             readback, ctx.readback = ctx.readback, None
             return {"messages": [AIMessage(content=readback, id=getattr(last, "id", None))]}
@@ -115,12 +98,9 @@ def build_graph(
         )
         if not checked.changed:
             return {}
-        # Same id -> add_messages replaces the reply, so history matches what was spoken.
         return {"messages": [AIMessage(content=checked.text, id=last.id)]}
 
     def route_after_tools(state: AgentState) -> str:
-        """A question for the caller or a finished change is said as it is: no need to wait
-        for the model to write it (which takes another round trip and may get it wrong)."""
         return "guardrail" if ctx.readback is not None or ctx.done is not None else "agent"
 
     def route_after_agent(state: AgentState) -> str:
