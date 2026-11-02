@@ -29,7 +29,6 @@ dependencies = [
     # Audio processing
     "numpy>=1.26",
     "soundfile>=0.12",
-    "pydub>=0.25",
     "aiofiles>=23.2",
 
     # Twilio (prototype telephony)

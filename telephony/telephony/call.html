@@ -57,6 +57,13 @@
   .end { background: var(--destructive); color: #fff; }
   .note { margin: 16px 0 0; font-size: 13px; color: var(--muted-foreground); }
   .error { margin: 12px 0 0; font-size: 13px; color: var(--destructive); }
+  .info { margin: 12px 0 0; font-size: 13px; color: var(--muted-foreground); }
+  .lines { list-style: none; margin: 0; padding: 0; max-height: 320px; overflow-y: auto; }
+  .lines li { padding: 10px 16px; border-bottom: 1px solid var(--border); }
+  .lines li:last-child { border-bottom: 0; }
+  .who { display: block; font-size: 12px; font-weight: 500; color: var(--muted-foreground); }
+  .lines .assistant .who { color: var(--primary); }
+  .conversation { margin-top: 16px; }
   [hidden] { display: none !important; }
   @media (max-width: 720px) {
     .shell { flex-direction: column; }
@@ -97,7 +104,13 @@
           <button class="end" id="endButton">End call</button>
         </div>
         <p class="error" id="error" hidden></p>
+        <p class="info" id="info" hidden></p>
       </div>
+    </section>
+
+    <section class="card conversation" id="conversation" hidden>
+      <div class="card-head">Conversation</div>
+      <ol class="lines" id="lines"></ol>
     </section>
 
     <p class="note">Use headphones if you can, so the receptionist doesn't hear its own voice. Finished calls appear under Calls in the dashboard.</p>
@@ -118,6 +131,7 @@
   const $ = (id) => document.getElementById(id);
   let ws, audioContext, micStream, processor;
   let inCall = false, nextPlayTime = 0, serverThinking = false, shown = "";
+  let browserSpeaking = false, closingMessage = null;
 
   function show(state) {
     if (state === shown) return;
@@ -132,8 +146,41 @@
     $("lineDetail").textContent = active ? "Talking to the receptionist" : "No call in progress";
   }
 
+  function addLine(role, text) {
+    const item = document.createElement("li");
+    item.className = role;
+    const who = document.createElement("span");
+    who.className = "who";
+    who.textContent = role === "user" ? "You" : "Receptionist";
+    item.append(who, text);
+    $("lines").append(item);
+    $("conversation").hidden = false;
+    $("lines").scrollTop = $("lines").scrollHeight;
+  }
+
+  // If the server could not make the audio for a reply, the browser's own voice reads it.
+  function speakInBrowser(text) {
+    if (!("speechSynthesis" in window)) return;
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = "en-IN";
+    browserSpeaking = true;
+    utterance.onend = utterance.onerror = () => { browserSpeaking = false; };
+    speechSynthesis.speak(utterance);
+  }
+
+  function onServerEvent(event) {
+    if (event.state) serverThinking = event.state === "thinking";
+    else if (event.transcript) addLine(event.transcript.role, event.transcript.text);
+    else if (event.speak) speakInBrowser(event.speak);
+    else if (event.error) closingMessage = { text: event.error, error: true };
+    else if (event.ended) closingMessage = { text: "The receptionist ended the call." };
+  }
+
   async function startCall() {
-    $("error").hidden = true;
+    $("error").hidden = $("info").hidden = true;
+    $("lines").replaceChildren();
+    $("conversation").hidden = true;
+    closingMessage = null;
     $("idle").hidden = true;
     $("live").hidden = false;
     show("connecting");
@@ -149,13 +196,14 @@
       ws.onopen = () => { inCall = true; setLine(true); show("speaking"); startMicrophone(); };
       ws.onmessage = (e) => {
         if (e.data instanceof ArrayBuffer) play(e.data);
-        else serverThinking = JSON.parse(e.data).state === "thinking";
+        else onServerEvent(JSON.parse(e.data));
       };
-      ws.onclose = ws.onerror = () => inCall && endCall();
+      ws.onclose = () => {
+        if (!audioContext && !inCall) return;
+        endCall(closingMessage || { text: "The connection was lost.", error: true }, true);
+      };
     } catch (err) {
-      endCall();
-      $("error").textContent = "The microphone could not be used: " + err.message;
-      $("error").hidden = false;
+      endCall({ text: "The microphone could not be used: " + err.message, error: true }, false);
     }
   }
 
@@ -166,7 +214,7 @@
       if (!inCall || ws.readyState !== WebSocket.OPEN) return;
       const input = e.inputBuffer.getChannelData(0);
       const now = audioContext.currentTime;
-      const playing = nextPlayTime > now;
+      const playing = nextPlayTime > now || browserSpeaking;
       // While a reply is worked out or played, send silence: neither background
       // noise nor the receptionist's own voice should count as the caller.
       const muted = serverThinking || playing || now < nextPlayTime + ECHO_TAIL;
@@ -207,21 +255,31 @@
     nextPlayTime += audio.duration;
   }
 
-  function endCall() {
+  // The server sends audio faster than it plays, so when the call ends the last words
+  // are still queued: let them finish before closing the audio.
+  function endCall(message, letAudioFinish) {
     inCall = false;
     serverThinking = false;
-    shown = "";
     if (processor) { processor.disconnect(); processor = null; }
     if (micStream) { micStream.getTracks().forEach((t) => t.stop()); micStream = null; }
     if (ws) { const socket = ws; ws = null; socket.close(); }
-    if (audioContext) { audioContext.close(); audioContext = null; }
+    const context = audioContext;
+    audioContext = null;
+    const wait = letAudioFinish && context ? Math.max(0, nextPlayTime - context.currentTime) : 0;
+    setTimeout(() => context && context.close(), wait * 1000 + 300);
+    shown = "";
     setLine(false);
     $("live").hidden = true;
     $("idle").hidden = false;
+    if (message) {
+      const target = $(message.error ? "error" : "info");
+      target.textContent = message.text;
+      target.hidden = false;
+    }
   }
 
   $("startButton").addEventListener("click", startCall);
-  $("endButton").addEventListener("click", endCall);
+  $("endButton").addEventListener("click", () => endCall({ text: "Call ended." }, false));
 </script>
 </body>
 </html>

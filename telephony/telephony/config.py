@@ -44,8 +44,8 @@ class TelephonySettings(BaseSettings):
     """'cuda', 'cpu', or 'auto' (auto-detects GPU)."""
     whisper_compute_type: str = "int8"
     """Quantisation: float16 (GPU) or int8 (CPU/GPU)."""
-    whisper_beam_size: int = 1
-    """Beam size 1 = fastest, lowest accuracy; increase for accuracy."""
+    whisper_beam_size: int = 5
+    """Beam size 1 = fastest, lowest accuracy; 5 is a little slower and more accurate."""
     whisper_vad_filter: bool = True
     """Let Whisper apply its own internal VAD on top of Silero."""
 
@@ -69,19 +69,30 @@ class TelephonySettings(BaseSettings):
     piper_voice_hi: str = "hi_IN-hemant-medium"
     piper_models_dir: str = "models/piper"
     """Directory where .onnx voice model files are stored."""
+    edge_rate: str = "+5%"
+    """Speaking speed of the Edge voices relative to normal, e.g. "+10%" or "-5%"."""
+    tts_retries: int = 2
+    """Extra tries when the voice service can't be reached."""
+    tts_timeout_seconds: float = 10.0
+    """Give up on one try of one sentence after this long."""
+    tts_cache_size: int = 128
+    """Sentences kept for reuse."""
     edge_voice_en: str = "en-IN-NeerjaNeural"
     edge_voice_hi: str = "hi-IN-SwaraNeural"
 
     # Call pipeline
-    call_timeout_seconds: int = 300
-    """Maximum call duration (5 min default). Call ends automatically after this."""
+    call_timeout_seconds: int = 600
+    """Longest a call can last (10 min default); it ends automatically after this."""
     silence_timeout_seconds: int = 30
-    """Hang up if the caller is silent for this many seconds."""
+    """Ask "are you still there?" after half of this many seconds of silence, and hang up
+    after the other half. Counted from the end of the last reply."""
+    thinking_filler_seconds: float = 4.0
+    """Say "one moment, please" if the agent takes longer than this to answer."""
     barge_in_enabled: bool = True
-    min_transcript_confidence: float = 0.3
-    """Transcripts Whisper is less sure of than this (0-1) are treated as background
-    noise and ignored, instead of being answered."""
     max_concurrent_calls: int = 10
+    web_call_enabled: bool = True
+    """The /call test page and /ws/call. They have no sign-in: anyone who can reach this
+    port could start calls and use the AI model, so turn them off on a public server."""
 
     # Logging
     log_level: str = "INFO"

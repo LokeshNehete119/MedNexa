@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 import httpx
@@ -10,6 +11,8 @@ from telephony.config import get_settings
 from telephony.logging_setup import get_logger
 
 log = get_logger("api_client")
+
+POST_RETRIES = 3
 
 
 class BackendClient:
@@ -36,11 +39,24 @@ class BackendClient:
         await self.aclose()
 
     async def _post(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
+        """POST, trying again after a network error or a 5xx: a brief outage must not lose
+        a transcript line or leave a finished call open."""
         url = f"/api/v1{path}"
-        resp = await self._client.post(url, json=body)
-        resp.raise_for_status()
-        result: dict[str, Any] = resp.json()
-        return result
+        for attempt in range(1 + POST_RETRIES):
+            try:
+                resp = await self._client.post(url, json=body)
+                if resp.status_code >= 500 and attempt < POST_RETRIES:
+                    raise httpx.HTTPStatusError("server error", request=resp.request, response=resp)
+            except (httpx.TransportError, httpx.HTTPStatusError) as exc:
+                if attempt == POST_RETRIES:
+                    raise
+                log.warning("backend_retry", path=path, attempt=attempt + 1, error=repr(exc)[:100])
+                await asyncio.sleep(0.5 * 2**attempt)
+                continue
+            resp.raise_for_status()
+            result: dict[str, Any] = resp.json()
+            return result
+        raise RuntimeError("unreachable")  # pragma: no cover
 
     async def start_call(self, hospital_id: str, caller_phone: str) -> str:
         """Returns the new call session's id."""

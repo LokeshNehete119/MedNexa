@@ -12,15 +12,19 @@ import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Any
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 
+from telephony import capacity
 from telephony.api_client import BackendClient
 from telephony.config import get_settings
 from telephony.logging_setup import configure_logging, get_logger
+from telephony.pipeline import fixed_phrases
 from telephony.stt import FasterWhisperSTT
+from telephony.tts import TTSEngine
 from telephony.twilio_handler import router as twilio_router
 from telephony.vad import SileroVAD
 
@@ -39,7 +43,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:  # type: ignore[type-ar
 
     log.info("preloading_models")
     SileroVAD._load_model()
-    FasterWhisperSTT()._load()
+    await asyncio.to_thread(FasterWhisperSTT().warm_up)
+    # Made in the background: fixed phrases are then ready even if the voice service
+    # can't be reached later, and the first call doesn't wait for them.
+    prewarm = asyncio.create_task(TTSEngine().prewarm(fixed_phrases()))
 
     if not cfg.hospital_id:
         log.error(
@@ -70,6 +77,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:  # type: ignore[type-ar
     yield
 
     log.info("telephony_shutting_down")
+    prewarm.cancel()
 
 
 def create_app() -> FastAPI:
@@ -103,83 +111,117 @@ def create_app() -> FastAPI:
 
     @app.get("/call", response_class=HTMLResponse)
     async def call_page() -> HTMLResponse:
-        return HTMLResponse(CALL_PAGE.read_text(encoding="utf-8"))
+        if not get_settings().web_call_enabled:
+            raise HTTPException(status_code=404)
+        return HTMLResponse(
+            CALL_PAGE.read_text(encoding="utf-8"), headers={"Cache-Control": "no-store"}
+        )
 
     @app.websocket("/ws/call")
     async def ws_call(websocket: WebSocket) -> None:
         """A call over a WebSocket, used by the /call page.
 
         Both directions carry 16 kHz mono int16 PCM as binary frames. The server also
-        sends text frames {"state": "thinking" | "listening"} as the turn changes.
-        The call starts on connect and ends on disconnect.
+        sends JSON text frames: {"state": "thinking" | "listening"} as the turn changes,
+        {"transcript": {"role", "text"}} for each line said, {"speak": text} when a reply
+        couldn't be turned into audio, {"error": text} if the call can't start, and
+        {"ended": true} when the server ends the call. The call starts on connect and ends
+        on disconnect.
         """
-        from telephony.pipeline import CallPipeline
-
+        if not get_settings().web_call_enabled:
+            await websocket.close(code=1008)
+            return
         await websocket.accept()
-        cfg = get_settings()
         # Without ?phone=..., the call is logged as from a withheld number.
         caller_phone = websocket.query_params.get("phone", "anonymous")
         language = websocket.query_params.get("lang")
         language = language if language in ("en", "hi") else None
 
-        async with BackendClient() as client:
-            session_id = await client.start_call(cfg.hospital_id, caller_phone)
-
-        log.info("ws_call_connected", session_id=session_id, caller=caller_phone)
-
-        audio_queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=2000)
-
-        async def receive_loop() -> None:
-            try:
-                while True:
-                    chunk = await websocket.receive_bytes()
-                    if not chunk:
-                        break
-                    if not pipeline.listening:
-                        continue  # noise while the reply is worked out
-                    try:
-                        audio_queue.put_nowait(chunk)
-                    except asyncio.QueueFull:
-                        with contextlib.suppress(Exception):
-                            audio_queue.get_nowait()
-                        with contextlib.suppress(Exception):
-                            audio_queue.put_nowait(chunk)
-            except WebSocketDisconnect:
-                pass
-            except Exception:
-                log.exception("ws_receive_error")
-            finally:
-                await audio_queue.put(b"")
-
-        async def audio_gen() -> AsyncIterator[bytes]:
-            while True:
-                chunk = await audio_queue.get()
-                if not chunk:
-                    return
-                yield chunk
-
-        async def send_audio(pcm: bytes) -> None:
-            with contextlib.suppress(Exception):  # client may have disconnected
-                await websocket.send_bytes(pcm)
-
-        async def send_state(state: str) -> None:
-            await websocket.send_text(json.dumps({"state": state}))
-
-        pipeline = CallPipeline(
-            session_id, caller_phone, send_audio, language=language, on_state=send_state
-        )
-        recv_task = asyncio.create_task(receive_loop())
-        pipe_task = asyncio.create_task(pipeline.run(audio_gen()))
-
-        done, pending = await asyncio.wait(
-            [recv_task, pipe_task], return_when=asyncio.FIRST_COMPLETED
-        )
-        for t in pending:
-            t.cancel()
-
-        log.info("ws_call_ended", session_id=session_id)
+        if not capacity.calls.try_acquire():
+            log.warning("ws_call_refused_busy", active=capacity.calls.active)
+            await _refuse(websocket, "All lines are busy. Please try again in a moment.")
+            return
+        try:
+            await _run_ws_call(websocket, caller_phone, language)
+        finally:
+            capacity.calls.release()
 
     return app
+
+
+async def _refuse(websocket: WebSocket, reason: str) -> None:
+    with contextlib.suppress(Exception):
+        await websocket.send_text(json.dumps({"error": reason}))
+        await websocket.close(code=1013)
+
+
+async def _run_ws_call(websocket: WebSocket, caller_phone: str, language: str | None) -> None:
+    from telephony.pipeline import CallPipeline
+
+    try:
+        async with BackendClient() as client:
+            session_id = await client.start_call(get_settings().hospital_id, caller_phone)
+    except Exception:
+        log.exception("ws_call_start_failed")
+        await _refuse(websocket, "The hospital system can't be reached right now. Try again.")
+        return
+    log.info("ws_call_connected", session_id=session_id, caller=caller_phone)
+
+    audio_queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=2000)
+
+    async def receive_loop() -> None:
+        try:
+            while True:
+                chunk = await websocket.receive_bytes()
+                if not chunk:
+                    break
+                if not pipeline.listening:
+                    continue  # noise while the reply is worked out
+                if audio_queue.full():  # drop the oldest chunk rather than stall
+                    audio_queue.get_nowait()
+                audio_queue.put_nowait(chunk)
+        except WebSocketDisconnect:
+            pass
+        except Exception:
+            log.exception("ws_receive_error")
+        finally:
+            audio_queue.put_nowait(b"")
+
+    async def audio_gen() -> AsyncIterator[bytes]:
+        while True:
+            chunk = await audio_queue.get()
+            if not chunk:
+                return
+            yield chunk
+
+    async def send_audio(pcm: bytes) -> None:
+        with contextlib.suppress(Exception):  # client may have disconnected
+            await websocket.send_bytes(pcm)
+
+    async def send_event(event: dict[str, Any]) -> None:
+        await websocket.send_text(json.dumps(event))
+
+    pipeline = CallPipeline(
+        session_id, caller_phone, send_audio, language=language, on_event=send_event
+    )
+    recv_task = asyncio.create_task(receive_loop())
+    pipe_task = asyncio.create_task(pipeline.run(audio_gen()))
+
+    done, pending = await asyncio.wait([recv_task, pipe_task], return_when=asyncio.FIRST_COMPLETED)
+    for task in pending:
+        task.cancel()
+    # Wait for the cancelled pipeline to close the call properly (it ends the call
+    # session in the backend) before this handler returns.
+    await asyncio.gather(*pending, return_exceptions=True)
+    for task in done:
+        if not task.cancelled() and task.exception() is not None:
+            log.error("ws_call_task_failed", error=repr(task.exception()))
+    if pipe_task in done:
+        # The server ended the call, rather than the caller: say so, then close properly.
+        with contextlib.suppress(Exception):
+            await send_event({"ended": True})
+            await websocket.close()
+    log.info("ws_call_ended", session_id=session_id)
 
 
 app = create_app()
