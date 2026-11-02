@@ -172,7 +172,9 @@ async def seed() -> None:
 
 
 async def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(
+        description="Seed a sample hospital: doctors, schedule overrides, FAQ entries and bookings."
+    )
     parser.add_argument("--reset", action="store_true", help="delete all data first")
     args = parser.parse_args()
     if args.reset:
