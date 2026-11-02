@@ -95,6 +95,9 @@ and allow the microphone. Use headphones so the receptionist doesn't hear itself
 from a phone's browser instead, expose port 8001 over HTTPS (for example `ngrok http 8001`)
 and open `<that URL>/call`; browsers only allow the microphone over HTTPS.
 
+The test line has no sign-in, so on a server reachable from the internet set
+`MEDNEXA_TEL_WEB_CALL_ENABLED=false`.
+
 **From a real phone, through Twilio:**
 1. On a Twilio trial account, add your own number under *Verified Caller IDs* (choose
    "Call me": SMS verification often fails for Indian numbers).

@@ -3,7 +3,7 @@
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import DomainValidationError, NotFound
@@ -86,6 +86,27 @@ async def purge_calls_older_than(db: AsyncSession, days: int) -> int:
         raise ValueError("days must be at least 1")
     cutoff = datetime.now(UTC) - timedelta(days=days)
     result = await db.execute(delete(CallSession).where(CallSession.call_start < cutoff))
+    await db.commit()
+    return result.rowcount or 0  # type: ignore[attr-defined]
+
+
+async def close_stale_calls(db: AsyncSession, minutes: int = 30) -> int:
+    """End calls that were never ended, e.g. when the telephony service was restarted or
+    crashed mid-call: they would show "still on the line" forever. A call can't last this
+    long (the telephony limit is 10 minutes), so one still open is one that was cut off.
+    The end is the last thing said, or the start if nothing was. Returns how many."""
+    cutoff = datetime.now(UTC) - timedelta(minutes=minutes)
+    last_said = (
+        select(func.max(CallLog.timestamp)).where(CallLog.session_id == CallSession.id)
+    ).scalar_subquery()
+    result = await db.execute(
+        update(CallSession)
+        .where(CallSession.call_end.is_(None), CallSession.call_start < cutoff)
+        .values(
+            call_end=func.coalesce(last_said, CallSession.call_start),
+            call_outcome=func.coalesce(CallSession.call_outcome, CallOutcome.ABANDONED),
+        )
+    )
     await db.commit()
     return result.rowcount or 0  # type: ignore[attr-defined]
 

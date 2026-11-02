@@ -12,6 +12,7 @@ Every call's provider and latency are logged.
 """
 
 import asyncio
+import json
 import logging
 import time
 from collections.abc import Callable, Sequence
@@ -56,9 +57,21 @@ def _rate_limited(exc: BaseException) -> bool:
     return getattr(exc, "status_code", None) == 429
 
 
+def _transient(exc: BaseException) -> bool:
+    """A network problem, a rate limit or a server error: worth trying again in a moment."""
+    status = getattr(exc, "status_code", None)
+    return (
+        isinstance(exc, ConnectionError | json.JSONDecodeError)  # a cut-off or corrupt reply
+        or "Connection" in type(exc).__name__
+        or "Timeout" in type(exc).__name__
+        or (isinstance(status, int) and (status == 429 or status >= 500))
+    )
+
+
 class SpilloverProvider:
-    """Several models behind one provider: a rate-limited model hands the request to
-    the next one straight away; only the last one waits out its limit."""
+    """Several models behind one provider: one that is rate limited or fails (a network error,
+    a server error, a corrupt reply) hands the request to the next straight away; only the
+    last one is retried by the router."""
 
     def __init__(self, providers: Sequence[ChatProvider]) -> None:
         self._providers = list(providers)
@@ -71,9 +84,12 @@ class SpilloverProvider:
             try:
                 result = await provider.ainvoke(messages, tools)
             except Exception as exc:
-                if not _rate_limited(exc):
+                # A busy or misbehaving model: the next one answers instead of the call waiting.
+                if not (_rate_limited(exc) or _transient(exc)):
                     raise
-                logger.info("llm_rate_limited provider=%s", provider.name)
+                logger.info(
+                    "llm_model_skipped provider=%s error=%s", provider.name, type(exc).__name__
+                )
                 continue
             self.name = provider.name
             return result
@@ -153,25 +169,39 @@ class ModelRouter:
         attempts = self._choose(language)
         if not attempts:
             raise NoProviderAvailable(f"No model available for LLM mode {self._settings.llm_mode}")
+        s = self._settings
         last_error: BaseException | None = None
         for index, (provider, timeout) in enumerate(attempts):
-            start = self._clock()
-            try:
-                async with asyncio.timeout(timeout):
-                    result = await provider.ainvoke(messages, tools)
-            except Exception as exc:  # includes TimeoutError from the latency cap
-                last_error = exc
-                self._record_failure(provider)
-                logger.warning(
-                    "llm_call_failed provider=%s error=%s fallback=%s",
-                    provider.name,
-                    type(exc).__name__,
-                    index + 1 < len(attempts),
-                )
-                continue
-            latency_ms = int((self._clock() - start) * 1000)
-            self._record_success(provider, latency_ms, fallback=index > 0)
-            return result
+            is_last = index + 1 == len(attempts)
+            # With another model to fall back to, don't wait out a retry on this one.
+            tries = 1 + (s.llm_retries if is_last else 0)
+            for attempt in range(tries):
+                start = self._clock()
+                try:
+                    async with asyncio.timeout(timeout):
+                        result = await provider.ainvoke(messages, tools)
+                except Exception as exc:  # includes TimeoutError from the latency cap
+                    last_error = exc
+                    if attempt + 1 < tries and _transient(exc):
+                        logger.warning(
+                            "llm_call_retry provider=%s error=%s attempt=%d",
+                            provider.name,
+                            type(exc).__name__,
+                            attempt + 1,
+                        )
+                        await asyncio.sleep(s.llm_retry_delay_seconds * 2**attempt)
+                        continue
+                    self._record_failure(provider)
+                    logger.warning(
+                        "llm_call_failed provider=%s error=%s fallback=%s",
+                        provider.name,
+                        type(exc).__name__,
+                        not is_last,
+                    )
+                    break
+                latency_ms = int((self._clock() - start) * 1000)
+                self._record_success(provider, latency_ms, fallback=index > 0)
+                return result
         raise NoProviderAvailable("All configured models failed") from last_error
 
     def _record_success(self, provider: ChatProvider, latency_ms: int, *, fallback: bool) -> None:
@@ -216,31 +246,44 @@ def build_router(settings: AgentSettings) -> ModelRouter:
         if settings.cloud_provider == CloudProvider.GROQ and settings.groq_api_key:
             from langchain_groq import ChatGroq
 
-            models = [settings.cloud_model, *settings.cloud_fallback_models]
-            groq = [
-                LangChainProvider(
-                    f"groq:{model}",
-                    ChatGroq(
-                        model_name=model,
-                        api_key=settings.groq_api_key,
-                        temperature=settings.temperature,
-                        reasoning_effort=settings.cloud_reasoning_effort,
-                        # Every model but the last passes a rate limit on at once.
-                        max_retries=2 if i == len(models) - 1 else 0,
-                    ),
-                )
-                for i, model in enumerate(models)
-            ]
-            cloud = groq[0] if len(groq) == 1 else SpilloverProvider(groq)
+            cloud = _cloud_models(
+                settings,
+                "groq",
+                lambda model, retries: ChatGroq(
+                    model_name=model,
+                    api_key=settings.groq_api_key,
+                    temperature=settings.temperature,
+                    reasoning_effort=settings.cloud_reasoning_effort,
+                    max_retries=retries,
+                    timeout=settings.cloud_request_timeout_seconds,
+                ),
+            )
         elif settings.cloud_provider == CloudProvider.OPENAI and settings.openai_api_key:
             from langchain_openai import ChatOpenAI
 
-            cloud = LangChainProvider(
-                f"openai:{settings.cloud_model}",
-                ChatOpenAI(
-                    model=settings.cloud_model,
+            cloud = _cloud_models(
+                settings,
+                "openai",
+                lambda model, retries: ChatOpenAI(
+                    model=model,
                     api_key=settings.openai_api_key,
+                    base_url=settings.openai_base_url,
                     temperature=settings.temperature,
+                    reasoning_effort=settings.cloud_reasoning_effort,
+                    max_retries=retries,
+                    timeout=settings.cloud_request_timeout_seconds,
                 ),
             )
     return ModelRouter(settings, local, cloud)
+
+
+def _cloud_models(
+    settings: AgentSettings, prefix: str, make: Callable[[str, int], Any]
+) -> ChatProvider:
+    """The cloud model, plus any fallback models that answer when it is rate limited."""
+    models = [settings.cloud_model, *settings.cloud_fallback_models]
+    # Retrying is the router's job (with a short, bounded wait), not the SDK's.
+    providers: list[ChatProvider] = [
+        LangChainProvider(f"{prefix}:{model}", make(model, 0)) for model in models
+    ]
+    return providers[0] if len(providers) == 1 else SpilloverProvider(providers)

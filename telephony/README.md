@@ -137,6 +137,39 @@ Whisper noise word ("you", "hmm") are ignored instead of answered.
 Whisper detects the language of every utterance; the reply is spoken in the same
 language. The /call page fixes the call to English instead.
 
+## Keeping a call alive
+
+A call only ends when the caller hangs up, the agent says goodbye, or its time runs out
+(10 minutes). Everything else is survived:
+
+- **Model errors:** retried; the caller is asked to repeat; only the third failed turn in a
+  row goes to staff (see the agent README).
+- **Voice errors:** each sentence is retried, and sentences already made are remembered, so
+  fixed phrases such as "One moment, please" still play if the voice service can't be reached.
+  If no audio can be made, the call goes on and the /call page speaks the reply with the
+  browser's own voice.
+- **Speech recognition errors** and noise: ignored; two utterances in a row with no words get
+  "Sorry, I didn't catch that".
+- **Slow replies:** "One moment, please" after 4 seconds (`THINKING_FILLER_SECONDS`).
+- **Silence:** "Are you still there?" after 15 seconds, goodbye after 15 more, counted from the
+  end of the last reply.
+- **The last words** finish playing before the line closes.
+- **Busy line:** over `MAX_CONCURRENT_CALLS` (10), callers are told to try again.
+- Calls that are cut off anyway are closed by the backend after 30 minutes.
+
+## Speech and voice
+
+Whisper (`base`, beam size 5) is given the hospital's doctor and department names as a
+prompt, which raised accuracy on a 100-clip test from 93.0% to 96.2%; the `small` model is
+slightly better but 3.6 times slower. The 0.3 s before speech is detected is kept, so the
+first syllable isn't lost.
+
+The voice is made a sentence at a time, in parallel, so a long reply starts after its first
+sentence. The silence the voice service puts around each sentence (about a second) is
+trimmed, and the speed is `EDGE_RATE` (default `+5%`). Text is converted with `ffmpeg`.
+
+The /call page shows what the receptionist heard and said as it happens.
+
 ## The agent
 
 The pipeline creates one agent per call with `create_agent()`

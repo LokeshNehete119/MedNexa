@@ -30,6 +30,7 @@ from langgraph.graph.state import CompiledStateGraph
 
 from agent.config import AgentSettings
 from agent.guardrails import apply_guardrails
+from agent.replies import done_reply
 from agent.router import ModelRouter
 from agent.tools import TOOLS, ToolContext, execute_tool
 
@@ -99,6 +100,15 @@ def build_graph(
 
     async def guardrail_node(state: AgentState) -> dict[str, Any]:
         last = state["messages"][-1]
+        if ctx.readback is not None:
+            # A change was only checked: the caller is asked, word for word, whatever the
+            # model wrote. (Same id -> the history matches what was spoken.)
+            ctx.readback_spoken = True
+            readback, ctx.readback = ctx.readback, None
+            return {"messages": [AIMessage(content=readback, id=getattr(last, "id", None))]}
+        if ctx.done is not None:
+            kind, data = ctx.done
+            return {"messages": [AIMessage(content=done_reply(kind, data, state["language"]))]}
         assert isinstance(last, AIMessage)
         checked = apply_guardrails(
             last.text, ctx.events, state["language"], max_chars=settings.max_response_chars
@@ -107,6 +117,11 @@ def build_graph(
             return {}
         # Same id -> add_messages replaces the reply, so history matches what was spoken.
         return {"messages": [AIMessage(content=checked.text, id=last.id)]}
+
+    def route_after_tools(state: AgentState) -> str:
+        """A question for the caller or a finished change is said as it is: no need to wait
+        for the model to write it (which takes another round trip and may get it wrong)."""
+        return "guardrail" if ctx.readback is not None or ctx.done is not None else "agent"
 
     def route_after_agent(state: AgentState) -> str:
         last = state["messages"][-1]
@@ -118,6 +133,6 @@ def build_graph(
     graph.add_node("guardrail", guardrail_node)
     graph.add_edge(START, "agent")
     graph.add_conditional_edges("agent", route_after_agent, ["tools", "guardrail"])
-    graph.add_edge("tools", "agent")
+    graph.add_conditional_edges("tools", route_after_tools, ["agent", "guardrail"])
     graph.add_edge("guardrail", END)
     return graph.compile(checkpointer=InMemorySaver())

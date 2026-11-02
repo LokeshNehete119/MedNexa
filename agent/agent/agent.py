@@ -32,6 +32,11 @@ from agent.tools import ToolContext
 
 logger = logging.getLogger(__name__)
 
+# Said when a turn fails but the call goes on, and when it keeps failing and goes to staff.
+RETRY = {
+    "en": "I'm sorry, I lost my connection for a moment. Could you please say that again?",
+    "hi": "माफ़ कीजिए, कनेक्शन में थोड़ी दिक्कत हुई। कृपया दोबारा कहिए।",
+}
 TROUBLE = {
     "en": (
         "I'm sorry, I'm having trouble right now. Let me connect you to our staff; "
@@ -66,7 +71,9 @@ class MedNexaAgent:
             caller_phone=phone,
             session_factory=self._session_factory,
             now=now,
+            confirm_changes=self.settings.confirm_changes,
         )
+        self._failed_turns = 0
         self.language = "en"
         # Set when the caller chose a language before the call: it is never switched.
         self.fixed_language: str | None = None
@@ -96,18 +103,28 @@ class MedNexaAgent:
             )
             if not text.strip():
                 return await self._reply_for_empty()
+            pending = self._pending
             state: AgentState = {
-                "messages": [*self._pending, HumanMessage(content=text)],
+                "messages": [*pending, HumanMessage(content=text)],
                 "language": self.language,
                 "tool_rounds": 0,
             }
             self._pending = []
+            self.ctx.turn += 1
+            self.ctx.last_caller_text = text
+            self.ctx.readback = None
+            self.ctx.done = None
             try:
                 result = await self._graph.ainvoke(state, self._config)
             except Exception:
                 logger.exception("agent_turn_failed")
-                self.ctx.escalation_reason = "Agent error"
-                return TROUBLE.get(self.language, TROUBLE["en"])
+                self._pending = pending
+                self._failed_turns += 1
+                if self._failed_turns >= self.settings.handover_after_failures:
+                    self.ctx.escalation_reason = "Agent error"
+                    return TROUBLE.get(self.language, TROUBLE["en"])
+                return RETRY.get(self.language, RETRY["en"])
+            self._failed_turns = 0
             reply = result["messages"][-1]
             return reply.text if isinstance(reply, AIMessage) else str(reply.content)
 
@@ -118,6 +135,19 @@ class MedNexaAgent:
         return summary
 
     # Extras for the call pipeline
+
+    @property
+    def speech_hints(self) -> str | None:
+        """Names the caller is likely to say, to help speech recognition get them right."""
+        h = self._hospital
+        if h is None:
+            return None
+        doctors = ", ".join(f"Dr. {d.name.removeprefix('Dr. ')}" for d in h.doctors)
+        return (
+            f"Call to {h.name}. Doctors: {doctors}. "
+            f"Departments: {', '.join(h.departments)}. Appointment booking: "
+            "patient name, age, gender male or female."
+        )
 
     @property
     def escalated(self) -> bool:

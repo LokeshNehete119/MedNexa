@@ -32,69 +32,6 @@ def _make_speech_chunk(frames: int = 20) -> bytes:
     return b"\x01\x00" * (512 * frames)
 
 
-@pytest.fixture()
-def mock_vad(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
-    """Replace SileroVAD with a mock that returns configurable events."""
-    vad = MagicMock()
-    vad.in_speech = False
-    vad.process_chunk.return_value = ["silence"]
-    vad.reset.return_value = None
-    monkeypatch.setattr("telephony.pipeline.SileroVAD", lambda: vad)
-    return vad
-
-
-@pytest.fixture()
-def mock_stt(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
-    """Replace FasterWhisperSTT with a mock."""
-    from telephony.stt import TranscriptionResult
-
-    stt = MagicMock()
-    stt.transcribe_bytes.return_value = TranscriptionResult(
-        text="I'd like to book an appointment",
-        language="en",
-        confidence=0.9,
-        duration_seconds=2.0,
-    )
-    monkeypatch.setattr("telephony.pipeline.FasterWhisperSTT", lambda: stt)
-    return stt
-
-
-@pytest.fixture()
-def mock_tts(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
-    """Replace TTSEngine with a mock that streams one empty chunk."""
-
-    async def fake_stream(text: str, lang: str) -> AsyncIterator[bytes]:
-        yield b"\x00" * 100
-
-    tts = MagicMock()
-    tts.stream = fake_stream
-    monkeypatch.setattr("telephony.pipeline.TTSEngine", lambda: tts)
-    return tts
-
-
-@pytest.fixture()
-def mock_api(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
-    """Replace BackendClient with an async mock."""
-    client = AsyncMock()
-    client.append_log = AsyncMock()
-    client.end_call = AsyncMock()
-    client.aclose = AsyncMock()
-    monkeypatch.setattr("telephony.pipeline.BackendClient", lambda: client)
-    return client
-
-
-@pytest.fixture()
-def mock_recorder(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
-    """Replace CallRecorder with a no-op mock."""
-    recorder = MagicMock()
-    recorder.enabled = False
-    recorder.__enter__ = MagicMock(return_value=recorder)
-    recorder.__exit__ = MagicMock(return_value=None)
-    recorder.write = MagicMock()
-    monkeypatch.setattr("telephony.pipeline.CallRecorder", lambda sid: recorder)
-    return recorder
-
-
 # Tests
 
 
@@ -233,14 +170,10 @@ class TestBackgroundNoise:
         await pipeline.run(audio_stream())
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize(
-        ("text", "confidence"),
-        [("", 0.0), ("you", 0.9), ("Hmm...", 0.8), ("book a slot for monday", 0.1)],
-    )
+    @pytest.mark.parametrize("text", ["", "you", "Hmm...", "Thanks for watching!"])
     async def test_noise_is_not_answered(
         self,
         text: str,
-        confidence: float,
         mock_vad: MagicMock,
         mock_stt: MagicMock,
         mock_tts: MagicMock,
@@ -250,7 +183,7 @@ class TestBackgroundNoise:
         from telephony.stt import TranscriptionResult
 
         mock_stt.transcribe_bytes.return_value = TranscriptionResult(
-            text=text, language="en", confidence=confidence, duration_seconds=1.0
+            text=text, language="en", confidence=0.9, duration_seconds=1.0
         )
         mock_vad.process_chunk.side_effect = [["speech_start"], ["speech_end"], ["silence"]]
         agent = MagicMock(wraps=StubAgent())
@@ -266,6 +199,31 @@ class TestBackgroundNoise:
         assert "USER" not in roles
 
     @pytest.mark.asyncio
+    async def test_a_short_low_confidence_sentence_is_still_answered(
+        self,
+        mock_vad: MagicMock,
+        mock_stt: MagicMock,
+        mock_tts: MagicMock,
+        mock_api: MagicMock,
+        mock_recorder: MagicMock,
+    ) -> None:
+        """ "just tomorrow" scored 0.26 in a real call and was thrown away as noise."""
+        from telephony.stt import TranscriptionResult
+
+        mock_stt.transcribe_bytes.return_value = TranscriptionResult(
+            text="just tomorrow.", language="en", confidence=0.26, duration_seconds=1.0
+        )
+        mock_vad.process_chunk.side_effect = [["speech_start"], ["speech_end"], ["silence"]]
+        agent = StubAgent()
+        agent.process = AsyncMock(return_value="Sure.")  # type: ignore[method-assign]
+
+        async def send(chunk: bytes) -> None:
+            pass
+
+        await self._one_utterance(CallPipeline("sess-n", "+911234567890", send, agent=agent))
+        agent.process.assert_awaited_once_with("just tomorrow.", "en")
+
+    @pytest.mark.asyncio
     async def test_audio_is_not_taken_while_the_reply_is_worked_out(
         self,
         mock_vad: MagicMock,
@@ -275,13 +233,13 @@ class TestBackgroundNoise:
         mock_recorder: MagicMock,
     ) -> None:
         mock_vad.process_chunk.side_effect = [["speech_start"], ["speech_end"], ["silence"]]
-        states: list[str] = []
+        events: list[dict] = []
         listening_while_thinking: list[bool] = []
         agent = StubAgent()
         pipeline: CallPipeline
 
-        async def on_state(state: str) -> None:
-            states.append(state)
+        async def on_event(event: dict) -> None:
+            events.append(event)
 
         async def process(text: str, language: str) -> str:
             listening_while_thinking.append(pipeline.listening)
@@ -292,11 +250,350 @@ class TestBackgroundNoise:
         async def send(chunk: bytes) -> None:
             pass
 
-        pipeline = CallPipeline("sess-s", "+911234567890", send, agent=agent, on_state=on_state)
+        pipeline = CallPipeline("sess-s", "+911234567890", send, agent=agent, on_event=on_event)
         await self._one_utterance(pipeline)
 
+        states = [e["state"] for e in events if "state" in e]
         assert states == ["thinking", "listening"]
         assert listening_while_thinking == [False]
+        lines = [e["transcript"] for e in events if "transcript" in e]
+        assert {"role": "user", "text": "I'd like to book an appointment"} in lines
+        assert {"role": "assistant", "text": "Sure."} in lines
+
+
+class TestFailuresDoNotEndTheCall:
+    """A failed voice, speech or model step is answered with an apology; the call goes on."""
+
+    @staticmethod
+    async def _call(pipeline: CallPipeline, utterances: int = 1) -> None:
+        async def audio() -> AsyncIterator[bytes]:
+            for _ in range(utterances):
+                yield _make_speech_chunk(3)
+                yield _make_speech_chunk(5)
+            yield _make_silence_chunk(1)
+
+        await pipeline.run(audio())
+
+    @staticmethod
+    def _speech_end_each(vad: MagicMock, utterances: int = 1) -> None:
+        vad.process_chunk.side_effect = [
+            *([["speech_start"], ["speech_end"]] * utterances),
+            ["silence"],
+        ]
+
+    @pytest.mark.asyncio
+    async def test_a_voice_failure_is_survived_and_the_text_is_offered_to_the_client(
+        self,
+        mock_vad: MagicMock,
+        mock_stt: MagicMock,
+        mock_api: MagicMock,
+        mock_recorder: MagicMock,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from telephony.tts import TTSUnavailable
+
+        async def broken_stream(text: str, lang: str) -> AsyncIterator[bytes]:
+            raise TTSUnavailable("no network")
+            yield b""  # pragma: no cover
+
+        tts = MagicMock()
+        tts.stream = broken_stream
+        monkeypatch.setattr("telephony.pipeline.TTSEngine", lambda: tts)
+        self._speech_end_each(mock_vad)
+        events: list[dict] = []
+
+        async def on_event(event: dict) -> None:
+            events.append(event)
+
+        async def send(chunk: bytes) -> None:
+            pass
+
+        pipeline = CallPipeline("s", "+911", send, agent=StubAgent(), on_event=on_event)
+        await self._call(pipeline)
+
+        spoken = [e["speak"] for e in events if "speak" in e]
+        assert any("Thank you for saying" in text for text in spoken)  # the reply, as text
+        mock_api.end_call.assert_awaited_once()  # the call ended normally, not by crashing
+
+    @pytest.mark.asyncio
+    async def test_a_speech_recognition_crash_is_survived(
+        self,
+        mock_vad: MagicMock,
+        mock_stt: MagicMock,
+        mock_tts: MagicMock,
+        mock_api: MagicMock,
+        mock_recorder: MagicMock,
+    ) -> None:
+        mock_stt.transcribe_bytes.side_effect = RuntimeError("whisper crashed")
+        self._speech_end_each(mock_vad)
+
+        async def send(chunk: bytes) -> None:
+            pass
+
+        await self._call(CallPipeline("s", "+911", send, agent=StubAgent()))
+        mock_api.end_call.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_an_agent_crash_gets_an_apology_and_the_call_goes_on(
+        self,
+        mock_vad: MagicMock,
+        mock_stt: MagicMock,
+        mock_tts: MagicMock,
+        mock_api: MagicMock,
+        mock_recorder: MagicMock,
+    ) -> None:
+        agent = StubAgent()
+        agent.process = AsyncMock(side_effect=[RuntimeError("boom"), "Back again."])  # type: ignore[method-assign]
+        self._speech_end_each(mock_vad, utterances=2)
+
+        async def send(chunk: bytes) -> None:
+            pass
+
+        pipeline = CallPipeline("s", "+911", send, agent=agent)
+        await self._call(pipeline, utterances=2)
+
+        said = [c.args[2] for c in mock_api.append_log.call_args_list if c.args[1] == "ASSISTANT"]
+        assert any("something went wrong" in text for text in said)
+        assert "Back again." in said
+        assert agent.process.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_a_slow_agent_gets_a_one_moment_filler(
+        self,
+        mock_vad: MagicMock,
+        mock_stt: MagicMock,
+        mock_tts: MagicMock,
+        mock_api: MagicMock,
+        mock_recorder: MagicMock,
+    ) -> None:
+        agent = StubAgent()
+
+        async def slow(text: str, language: str) -> str:
+            await asyncio.sleep(0.3)
+            return "Done."
+
+        agent.process = slow  # type: ignore[method-assign]
+        self._speak_log: list[str] = []
+        spoken: list[str] = []
+
+        async def stream(text: str, lang: str) -> AsyncIterator[bytes]:
+            spoken.append(text)
+            yield b"\x00" * 10
+
+        mock_tts.stream = stream
+        self._speech_end_each(mock_vad)
+
+        async def send(chunk: bytes) -> None:
+            pass
+
+        pipeline = CallPipeline("s", "+911", send, agent=agent)
+        pipeline._cfg = pipeline._cfg.model_copy(update={"thinking_filler_seconds": 0.05})
+        await self._call(pipeline)
+        assert "One moment, please." in spoken
+        assert spoken.index("One moment, please.") < spoken.index("Done.")
+
+    @pytest.mark.asyncio
+    async def test_one_unheard_utterance_is_quiet_but_two_in_a_row_get_a_prompt(
+        self,
+        mock_vad: MagicMock,
+        mock_stt: MagicMock,
+        mock_tts: MagicMock,
+        mock_api: MagicMock,
+        mock_recorder: MagicMock,
+    ) -> None:
+        from telephony.stt import TranscriptionResult
+
+        mock_stt.transcribe_bytes.return_value = TranscriptionResult(
+            text="", language="en", confidence=0.0, duration_seconds=1.0
+        )
+        spoken: list[str] = []
+
+        async def stream(text: str, lang: str) -> AsyncIterator[bytes]:
+            spoken.append(text)
+            yield b"\x00" * 10
+
+        mock_tts.stream = stream
+
+        async def send(chunk: bytes) -> None:
+            pass
+
+        self._speech_end_each(mock_vad)
+        await self._call(CallPipeline("s", "+911", send, agent=StubAgent()), utterances=1)
+        assert not any("didn't catch" in text for text in spoken)
+
+        spoken.clear()
+        self._speech_end_each(mock_vad, utterances=2)
+        await self._call(CallPipeline("s", "+911", send, agent=StubAgent()), utterances=2)
+        assert sum("didn't catch" in text for text in spoken) == 1
+
+
+class TestEndOfCall:
+    @pytest.mark.asyncio
+    async def test_the_last_words_finish_playing_before_the_call_ends(
+        self,
+        mock_vad: MagicMock,
+        mock_stt: MagicMock,
+        mock_tts: MagicMock,
+        mock_api: MagicMock,
+        mock_recorder: MagicMock,
+    ) -> None:
+        import time
+
+        async def send(chunk: bytes) -> None:
+            pass
+
+        pipeline = CallPipeline("s", "+911", send, agent=StubAgent())
+        pipeline._playback_until = time.monotonic() + 0.3
+        started = time.monotonic()
+        await pipeline._finish()
+        assert time.monotonic() - started >= 0.3
+        mock_api.end_call.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_the_call_is_closed_even_if_cancelled_while_the_last_words_play(
+        self,
+        mock_vad: MagicMock,
+        mock_stt: MagicMock,
+        mock_tts: MagicMock,
+        mock_api: MagicMock,
+        mock_recorder: MagicMock,
+    ) -> None:
+        import time
+
+        async def send(chunk: bytes) -> None:
+            pass
+
+        pipeline = CallPipeline("s", "+911", send, agent=StubAgent())
+        pipeline._playback_until = time.monotonic() + 30
+        task = asyncio.create_task(pipeline._finish())
+        await asyncio.sleep(0.05)  # now waiting for the playback to end
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        mock_api.end_call.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_hanging_up_during_the_greeting_still_closes_the_call(
+        self,
+        mock_vad: MagicMock,
+        mock_stt: MagicMock,
+        mock_api: MagicMock,
+        mock_recorder: MagicMock,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        async def slow_stream(text: str, lang: str) -> AsyncIterator[bytes]:
+            await asyncio.sleep(30)
+            yield b""
+
+        tts = MagicMock()
+        tts.stream = slow_stream
+        monkeypatch.setattr("telephony.pipeline.TTSEngine", lambda: tts)
+
+        async def send(chunk: bytes) -> None:
+            pass
+
+        async def audio() -> AsyncIterator[bytes]:
+            await asyncio.sleep(60)
+            yield b""
+
+        task = asyncio.create_task(CallPipeline("s", "+911", send, agent=StubAgent()).run(audio()))
+        await asyncio.sleep(0.05)  # the greeting is being made
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        mock_api.end_call.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_a_caller_who_hung_up_is_not_waited_for(
+        self,
+        mock_vad: MagicMock,
+        mock_stt: MagicMock,
+        mock_tts: MagicMock,
+        mock_api: MagicMock,
+        mock_recorder: MagicMock,
+    ) -> None:
+        import time
+
+        async def send(chunk: bytes) -> None:
+            pass
+
+        pipeline = CallPipeline("s", "+911", send, agent=StubAgent())
+        pipeline._playback_until = time.monotonic() + 30  # a long reply still "playing"
+
+        async def finish_when_cancelled() -> None:
+            try:
+                await asyncio.sleep(60)
+            finally:
+                await pipeline._finish()
+
+        task = asyncio.create_task(finish_when_cancelled())
+        await asyncio.sleep(0)
+        started = time.monotonic()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert time.monotonic() - started < 2
+        mock_api.end_call.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_too_short_a_sound_is_not_speech(
+        self,
+        mock_vad: MagicMock,
+        mock_stt: MagicMock,
+        mock_tts: MagicMock,
+        mock_api: MagicMock,
+        mock_recorder: MagicMock,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr("telephony.pipeline.MIN_UTTERANCE_BYTES", 9600)  # 0.3 s
+        mock_vad.process_chunk.side_effect = [["speech_start"], ["speech_end"], ["silence"]]
+
+        async def send(chunk: bytes) -> None:
+            pass
+
+        async def audio() -> AsyncIterator[bytes]:
+            yield _make_speech_chunk(1)
+            yield _make_speech_chunk(1)
+            yield _make_silence_chunk(1)
+
+        await CallPipeline("s", "+911", send, agent=StubAgent()).run(audio())
+        mock_stt.transcribe_bytes.assert_not_called()
+
+
+class TestPreRoll:
+    @pytest.mark.asyncio
+    async def test_audio_just_before_speech_is_kept(
+        self,
+        mock_vad: MagicMock,
+        mock_stt: MagicMock,
+        mock_tts: MagicMock,
+        mock_api: MagicMock,
+        mock_recorder: MagicMock,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """VAD notices speech a few frames late; the first syllable must not be lost."""
+        mock_vad.process_chunk.side_effect = [
+            ["silence"],
+            ["silence"],
+            ["speech_start"],
+            ["speech_end"],
+            ["silence"],
+        ]
+        monkeypatch.setattr("telephony.pipeline.normalise_audio", lambda pcm: pcm)
+        quiet, before = b"\x00\x00" * 512, b"\x07\x00" * 512
+        onset, rest = b"\x01\x00" * 512, b"\x02\x00" * 512
+
+        async def send(chunk: bytes) -> None:
+            pass
+
+        async def audio() -> AsyncIterator[bytes]:
+            for c in (quiet, before, onset, rest, _make_silence_chunk(1)):
+                yield c
+
+        pipeline = CallPipeline("s", "+911", send, agent=StubAgent())
+        pipeline._processor.process = lambda chunk: chunk  # type: ignore[method-assign]
+        await pipeline.run(audio())
+        assert mock_stt.transcribe_bytes.call_args.args[0] == quiet + before + onset + rest
 
 
 class TestPipelineTimeout:

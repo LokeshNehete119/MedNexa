@@ -22,6 +22,7 @@ from fastapi import APIRouter, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import PlainTextResponse, Response
 from twilio.rest import Client
 
+from telephony import capacity
 from telephony.api_client import BackendClient
 from telephony.audio_codec import pipeline_to_twilio, twilio_to_pipeline
 from telephony.config import get_settings
@@ -132,6 +133,14 @@ async def voice_webhook(request: Request) -> Response:
     caller_phone = params.get("From", "")
     log.info("incoming_call", call_sid=call_sid, caller=caller_phone)
 
+    if capacity.calls.full():
+        log.warning("call_refused_busy", call_sid=call_sid, active=capacity.calls.active)
+        busy = (
+            '<?xml version="1.0" encoding="UTF-8"?><Response><Say>All our lines are busy. '
+            "Please call again in a moment.</Say><Hangup/></Response>"
+        )
+        return PlainTextResponse(content=busy, media_type="text/xml")
+
     if not cfg.public_url:
         log.error("public_url_not_set")  # answer anyway, or Twilio keeps retrying
     token = _issue_stream_token(call_sid, caller_phone)
@@ -141,8 +150,18 @@ async def voice_webhook(request: Request) -> Response:
 
 @router.websocket("/stream/{call_sid}")
 async def stream_websocket(websocket: WebSocket, call_sid: str) -> None:
-    """Twilio sends "start" (stream details), "media" (base64 audio) and "stop" messages."""
     await websocket.accept()
+    if not capacity.calls.try_acquire():
+        await websocket.close(code=1013)
+        return
+    try:
+        await _serve_stream(websocket, call_sid)
+    finally:
+        capacity.calls.release()
+
+
+async def _serve_stream(websocket: WebSocket, call_sid: str) -> None:
+    """Twilio sends "start" (stream details), "media" (base64 audio) and "stop" messages."""
     cfg = get_settings()
     caller_phone = ""
     stream_sid: str | None = None
@@ -186,12 +205,14 @@ async def stream_websocket(websocket: WebSocket, call_sid: str) -> None:
 
                 elif event == "stop":
                     log.info("stream_stopped", call_sid=call_sid)
-                    await audio_queue.put(b"")  # sentinel
                     break
 
         except WebSocketDisconnect:
             log.info("websocket_disconnected", call_sid=call_sid)
-            await audio_queue.put(b"")
+        finally:
+            if audio_queue.full():
+                audio_queue.get_nowait()
+            audio_queue.put_nowait(b"")  # tells the pipeline the caller is gone
 
     async def audio_generator() -> AsyncIterator[bytes]:
         while True:
@@ -241,3 +262,8 @@ async def stream_websocket(websocket: WebSocket, call_sid: str) -> None:
     )
     for task in pending:
         task.cancel()
+    # Wait for the cancelled pipeline to end the call session before this handler returns.
+    await asyncio.gather(*pending, return_exceptions=True)
+    for task in done:
+        if not task.cancelled() and task.exception() is not None:
+            log.error("stream_task_failed", error=repr(task.exception()))

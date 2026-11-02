@@ -87,14 +87,23 @@ class FasterWhisperSTT:
         audio_bytes: bytes,
         *,
         language_hint: str | None = None,
+        prompt: str | None = None,
     ) -> TranscriptionResult:
         """16 kHz mono int16 PCM to text. Blocking: call it from a worker thread.
-        ``language_hint`` ("en"/"hi") skips language detection."""
+        ``language_hint`` ("en"/"hi") skips language detection; ``prompt`` is text that
+        makes the names in it more likely to be heard correctly."""
         if not audio_bytes:
             return self._empty(language_hint)
         self._load()
         samples = np.frombuffer(audio_bytes, dtype=np.int16).astype(np.float32) / 32768.0
-        return self._transcribe_array(samples, language_hint=language_hint)
+        return self._transcribe_array(samples, language_hint=language_hint, prompt=prompt)
+
+    def warm_up(self) -> None:
+        """The first transcription is much slower than the rest; do one before any call."""
+        self._load()
+        noise = np.random.default_rng(0).standard_normal(16000 * 2).astype(np.float32) * 0.01
+        segments, _ = self._model.transcribe(noise, language="en", vad_filter=False)
+        list(segments)
 
     def transcribe_file(
         self,
@@ -108,25 +117,28 @@ class FasterWhisperSTT:
         samples, _ = sf.read(str(path), dtype="float32", always_2d=False)
         if samples.ndim == 2:
             samples = samples.mean(axis=1)
-        return self._transcribe_array(samples, language_hint=language_hint)
+        return self._transcribe_array(samples, language_hint=language_hint, prompt=None)
 
     def _transcribe_array(
         self,
         samples: np.ndarray[Any, Any],
         *,
         language_hint: str | None,
+        prompt: str | None,
     ) -> TranscriptionResult:
         if len(samples) == 0:
             return self._empty(language_hint)
 
         forced = language_hint if language_hint in SUPPORTED_LANGUAGES else None
-        segments, info = self._run(samples, forced)
+        segments, info = self._run(samples, forced, prompt)
         language = forced or _LANGUAGE_ALIASES.get((info.language or "").lower())
         if language is None:
             # Detected something we don't support: redo it as the likelier of en/hi.
             language = self._likelier_supported(info)
-            segments, info = self._run(samples, language)
+            segments, info = self._run(samples, language, prompt)
 
+        # Whisper's own test for a segment that is silence or noise, not speech.
+        segments = [s for s in segments if not (s.no_speech_prob > 0.6 and s.avg_logprob < -1.0)]
         text = " ".join(s.text.strip() for s in segments if s.text.strip())
         avg_logprob = sum(s.avg_logprob for s in segments) / len(segments) if segments else -1.0
         # Rough confidence: the average log-probability (at most 0) shifted into [0, 1].
@@ -147,12 +159,17 @@ class FasterWhisperSTT:
             duration_seconds=duration,
         )
 
-    def _run(self, samples: np.ndarray[Any, Any], language: str | None) -> tuple[list[Any], Any]:
+    def _run(
+        self, samples: np.ndarray[Any, Any], language: str | None, prompt: str | None = None
+    ) -> tuple[list[Any], Any]:
         kwargs: dict[str, Any] = {
             "beam_size": self._beam_size,
             "vad_filter": self._vad_filter,
             "word_timestamps": False,
+            "condition_on_previous_text": False,
         }
+        if prompt:
+            kwargs["initial_prompt"] = prompt
         if language:
             kwargs["language"] = language
         segments, info = self._model.transcribe(samples, **kwargs)

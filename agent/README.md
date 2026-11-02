@@ -100,12 +100,30 @@ All settings use the `MEDNEXA_AGENT_` prefix (see `.env.example`):
 | `LOCAL_CONTEXT_TOKENS` / `LOCAL_KEEP_ALIVE` | `8192` / `1h` | Context window for Ollama (its 4096 default cuts off long calls); how long the model stays loaded |
 | `CLOUD_PROVIDER` / `CLOUD_MODEL` | `groq` / `openai/gpt-oss-20b` | Cloud model; only used when `GROQ_API_KEY` or `OPENAI_API_KEY` is set. Check the provider's current model list |
 | `CLOUD_FALLBACK_MODELS` | `[]` | Groq models that answer when the main one is rate limited (each has its own per-minute limit) |
+| `OPENAI_BASE_URL` | unset | With `CLOUD_PROVIDER=openai`, any OpenAI-compatible service, e.g. `https://api.featherless.ai/v1` |
 | `CLOUD_REASONING_EFFORT` | unset | `low` makes gpt-oss models think briefly: faster replies, fewer tokens |
+| `CLOUD_REQUEST_TIMEOUT_SECONDS` / `CLOUD_TIMEOUT_SECONDS` | `10` / `40` | One model request, and the whole answer including retries. A stalled request is abandoned and retried |
+| `LLM_RETRIES` / `LLM_RETRY_DELAY_SECONDS` | `2` / `0.7` | Extra tries after a network error, a 5xx, a rate limit or a corrupt reply (the wait doubles each time). With fallback models, the next model answers at once instead |
+| `HANDOVER_AFTER_FAILURES` | `3` | Turns in a row that fail before the caller is passed to staff. Until then the caller is asked to repeat and the call goes on |
+| `CONFIRM_CHANGES` | `true` | Booking, cancelling, rescheduling and transferring need the caller's "yes" (see below) |
 | `MAX_LATENCY_SECONDS` | `3` | Local calls slower than this fall back to cloud |
 | `HINDI_PREFERS_CLOUD` | `true` | Send Hindi turns to the cloud model when available |
 | `CIRCUIT_FAILURE_THRESHOLD` / `CIRCUIT_OPEN_SECONDS` | `3` / `300` | Skip local after repeated failures |
 | `MAX_TOOL_ROUNDS` | `6` | Tool round trips per caller turn before forcing an answer |
 | `MAX_RESPONSE_CHARS` | `600` | Spoken reply length cap |
+
+## How changes are confirmed
+
+A model can't be trusted to ask first, so the code does. The first `book_appointment`,
+`cancel_appointment`, `reschedule_appointment` or `transfer_to_human` call only checks: it
+changes nothing, and the receptionist asks the caller the exact details itself ("Just to
+confirm: Rohan Mehta with Dr. Suresh Patel on Tuesday, 3 November at 9:50 AM. Shall I book
+it?"), whatever the model wrote. The same call goes ahead only if the caller's next message is
+a clear yes (English, Hindi or Hinglish; any "no" or "but" makes it not clear) and the details
+are unchanged. A transfer the caller asked for ("let me talk to a person") is immediate.
+
+After a successful change the receptionist says the result itself (time, token number), so
+the details are exact and the turn needs one model call, not two.
 
 ## Testing
 
